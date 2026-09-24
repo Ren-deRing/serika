@@ -25,6 +25,14 @@ SECTIONS
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    .init.data : {
+        __start_patchable_functions = .;
+        KEEP(*(__patchable_function_entries))
+        __end_patchable_functions = .;
+    }
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
     .rodata : {
         __rodata_start = .;
         *(.rodata .rodata.*)
