@@ -14,10 +14,13 @@ IMAGE_ROOT := $(BUILD_DIR)/iso_root
 
 LIMINE_DIR := $(DEPS_DIR)/limine
 
-SUBDIRS := init
+# Except for drivers.
+SUBDIRS := kernel init arch
+
+include drivers/Makefile
 
 ifeq ($(ARCH), x86_64)
-    ARCH_CFLAGS  := -m64 -march=x86-64 -mno-red-zone
+    ARCH_CFLAGS  := -m64 -march=x86-64 -mno-red-zone -fpatchable-function-entry=5
     ARCH_LDFLAGS := -m elf_x86_64
     LIMINE_EFI   := $(LIMINE_DIR)/BOOTX64.EFI
 	# add your architecture here...
@@ -33,6 +36,7 @@ export CFLAGS   := -g -O2 -ffreestanding -fno-stack-protector \
 
 export CPPFLAGS := -I$(BASE_DIR) \
 				   -I$(BASE_DIR)/include \
+				   -I$(BASE_DIR)/arch/$(ARCH)/include \
                    -D__$(ARCH)__
 
 export LDFLAGS  := $(ARCH_LDFLAGS) -nostdlib -static --gc-sections \
@@ -54,11 +58,10 @@ $(SUBDIRS):
 	@mkdir -p $(OBJ_DIR)/$@
 	@$(MAKE) -C $@ ARCH=$(ARCH)
 
-$(BIN_DIR)/$(OUTPUT): $(SUBDIRS)
+$(BIN_DIR)/$(OUTPUT): $(SUBDIRS) $(DRV_BUILTIN)
 	@mkdir -p $(BIN_DIR)
 	@echo "LD: $@"
-	$(eval ALL_OBJS := $(shell find $(OBJ_DIR) -name "*.o"))
-	$(LD) $(LDFLAGS) $(ALL_OBJS) -o $@
+	$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
 
 setup:
 	@if [ ! -d "$(LIMINE_DIR)" ]; then \
@@ -106,7 +109,10 @@ run: build
 		-m 8G \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
-		-serial stdio -smp 4 -accel kvm -cpu host \
+		-serial stdio \
+		-d int \
+		-no-reboot \
+		-accel kvm -cpu host \
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
