@@ -1,8 +1,7 @@
 #include <serika/compiler.h>
+#include <serika/ftrace.h>
 #include <serika/printk.h>
 #include <serika/serial.h>
-
-#include <asm/ftrace.h>
 
 notrace void start_init(void) {
     serial_init();
@@ -10,7 +9,7 @@ notrace void start_init(void) {
 
     printk("\x1b[2J\x1b[H");
 
-    init_ftrace();
+    ftrace_enable(TRACE_NOP);
 
     for (;;);
 }

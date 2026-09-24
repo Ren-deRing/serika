@@ -7,32 +7,32 @@
 
 #include <stdint.h>
 
-extern void ftrace_caller();
+typedef void (*builder_t)(uint8_t *, void *, void *);
 
-extern uintptr_t __start_patchable_functions[];
-extern uintptr_t __end_patchable_functions[];
-
-notrace void patch_ftrace_call(void *target_func, void *tracer_func) {
-    uint8_t buffer[5];
-    
+notrace void build_inst_call(uint8_t *buffer, void *target_func, void *tracer_func) {
+    /* 0xE8: CALL(rel32) */
     buffer[0] = 0xE8;
-    
+
     int32_t offset = (int32_t)((uintptr_t)tracer_func - ((uintptr_t)target_func + 5));
     memcpy(&buffer[1], &offset, sizeof(int32_t));
-
-    text_patch(target_func, buffer, 5);
 }
 
-notrace void init_ftrace(void) {
-    uintptr_t *addr = __start_patchable_functions;
-    uintptr_t *end = __end_patchable_functions;
-    
-    int count = end - addr;
-    
-    printk("ftrace: %d functions to patch\n", count);
-    printk("ftrace: tracer address: %lx\n", (uintptr_t)ftrace_caller);
-    for (int i = 0; i<count; i++) {
-        printk("function [%d]: %lx\n", i, addr[i]);
-        patch_ftrace_call((void *) addr[i], ftrace_caller);
-    }
+notrace void build_inst_nop(uint8_t *buffer, void *target_func, void *tracer_func) {
+    (void)target_func, (void)tracer_func;
+
+    /* 5-byte NOP */
+    buffer[0] = 0x0F; buffer[1] = 0x1F; buffer[2] = 0x44;
+    buffer[3] = 0x00; buffer[4] = 0x00;
+}
+
+static builder_t build_table[] = {
+    [TRACE_CALL] = (builder_t)build_inst_call,
+    [TRACE_NOP]  = (builder_t)build_inst_nop,
+};
+
+notrace void patch_ftrace(void *target_func, void *tracer_func, enum trace_t type) {
+    uint8_t buffer[5];
+
+    build_table[type](buffer, target_func, tracer_func);
+    text_patch(target_func, buffer, 5);
 }
