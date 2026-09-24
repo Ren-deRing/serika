@@ -1,0 +1,6 @@
+bin
+build
+deps
+
+.setup_done
+compile_commands.json
