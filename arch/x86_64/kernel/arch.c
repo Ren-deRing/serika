@@ -26,3 +26,4 @@ notrace void arch_halt() {
 notrace void arch_pause() {
     asm volatile ("pause");
 }
+

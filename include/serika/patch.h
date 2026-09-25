@@ -1,3 +1,5 @@
+#pragma once
+
 #include <serika/compiler.h>
 
 #include <stddef.h>
