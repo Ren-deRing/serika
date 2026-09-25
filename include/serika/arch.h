@@ -11,3 +11,4 @@ void arch_irq_disable(void);
 void arch_irq_enable(void);
 void arch_halt();
 void arch_pause();
+void arch_panic(void);

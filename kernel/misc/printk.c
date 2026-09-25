@@ -27,13 +27,17 @@ notrace static char* _stb_callback(char const *buf, void *user, int len) {
     return (char *)buf;
 }
 
-notrace void printk(const char* fmt, ...) {
-    char buf[STB_SPRINTF_MIN]; 
+notrace void vprintk(const char *fmt, va_list args) {
+    char buf[STB_SPRINTF_MIN];
 
+    stbsp_vsprintfcb(_stb_callback, NULL, buf, fmt, args);
+}
+
+notrace void printk(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
 
-    stbsp_vsprintfcb(_stb_callback, NULL, buf, fmt, args);
+    vprintk(fmt, args);
 
     va_end(args);
 }

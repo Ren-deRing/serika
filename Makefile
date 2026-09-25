@@ -112,7 +112,7 @@ run: build
 		-serial stdio \
 		-d int \
 		-no-reboot \
-		-accel kvm -cpu host \
+		-accel kvm -cpu host,tsc-freq=2500000000 \
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)

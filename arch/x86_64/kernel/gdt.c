@@ -1,9 +1,9 @@
-#include <asm/cpu.h>
 #include <serika/arch.h>
 #include <serika/cpu.h>
 #include <serika/printk.h>
 
 #include <asm/trapframe.h>
+#include <asm/cpu.h>
 
 #include "gdt.h"
 
