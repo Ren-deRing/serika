@@ -1,5 +1,7 @@
 #pragma once
 
+#include <asm/trapframe.h>
+
 #include <stdint.h>
 
 typedef void (*handler_t)(struct trapframe *tf, void *data);
