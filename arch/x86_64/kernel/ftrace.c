@@ -2,8 +2,7 @@
 #include <serika/ftrace.h>
 #include <serika/printk.h>
 #include <serika/string.h>
-
-#include <asm/patch.h>
+#include <serika/patch.h>
 
 #include <stdint.h>
 

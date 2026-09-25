@@ -1,3 +1,4 @@
+#include <serika/arch.h>
 #include <serika/compiler.h>
 #include <serika/ftrace.h>
 #include <serika/printk.h>
@@ -9,7 +10,7 @@ notrace void start_init(void) {
 
     printk("\x1b[2J\x1b[H");
 
-    ftrace_enable(TRACE_NOP);
+    ftrace_enable();
 
-    for (;;);
+    for (;;) arch_halt();
 }
