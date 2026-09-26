@@ -30,7 +30,7 @@ struct cpu* get_this_core(void) {
 static inline int is_intel(void) {
     uint32_t eax, ebx, ecx, edx;
     cpuid(0, 0, &eax, &ebx, &ecx, &edx);
-    // ebx == "Genu", edx == "ineI", ecx == "ntel"
+    /* ebx == "Genu", edx == "ineI", ecx == "ntel" */
     return (ebx == 0x756e6547 && edx == 0x49656e69 && ecx == 0x6c65746e);
 }
 

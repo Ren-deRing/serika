@@ -11,7 +11,7 @@ static volatile idt_entry_t idt[256];
 static volatile idtr_t idtr;
 static struct isr_slot handlers[256];
 
-void isr_handler(struct trapframe *tf) {
+notrace void isr_handler(struct trapframe *tf) {
     struct isr_slot *slot = &handlers[tf->vector];
     if (slot->func) { slot->func(tf, slot->data); return; }
 

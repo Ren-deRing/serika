@@ -1,4 +1,5 @@
 #include <serika/arch.h>
+#include <serika/boot.h>
 #include <serika/compiler.h>
 #include <serika/cpu.h>
 #include <serika/ftrace.h>
@@ -20,6 +21,8 @@ notrace void start_init(void) {
 
     printk("it looks like a clocksource will be needed.\n");
     printk("tsc freq is: %lu\n", curcpu->tsc_freq_hz);
+
+    printk("LFB: %dx%d\n", g_bootinfo.fb.width, g_bootinfo.fb.height);
 
     for (;;) arch_halt();
 }

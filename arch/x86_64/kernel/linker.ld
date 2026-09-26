@@ -1,4 +1,4 @@
-ENTRY(start_init)
+ENTRY(boot_entry)
 
 PHDRS
 {
