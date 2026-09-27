@@ -15,7 +15,7 @@ IMAGE_ROOT := $(BUILD_DIR)/iso_root
 LIMINE_DIR := $(DEPS_DIR)/limine
 
 # Except for drivers.
-SUBDIRS := kernel init arch
+SUBDIRS := kernel init arch mm
 
 include drivers/Makefile
 

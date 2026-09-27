@@ -1,5 +1,6 @@
 #include <deps/limine.h>
 #include <serika/boot.h>
+#include <stdint.h>
 
 bootinfo_t g_bootinfo;
 
@@ -52,15 +53,20 @@ void boot_entry(void) {
     uint64_t rsdp_address = (uintptr_t)rsdp_req.response->address;
 
     /* Memory */
-    g_bootinfo.mmap_entries = (mmap->entry_count > MAX_MMAP_ENTRIES) ? MAX_MMAP_ENTRIES : mmap->entry_count;
+    g_bootinfo.mem.length = (mmap->entry_count > MAX_MMAP_ENTRIES) ? MAX_MMAP_ENTRIES : mmap->entry_count;
     
-    for (uint64_t i = 0; i < g_bootinfo.mmap_entries; i++) {
+    for (uint64_t i = 0; i < g_bootinfo.mem.length; i++) {
         g_mmap_storage[i].base   = mmap->entries[i]->base;
         g_mmap_storage[i].length = mmap->entries[i]->length;
         g_mmap_storage[i].type   = convert_memtype(mmap->entries[i]->type);
+
+        uint64_t end_addr = mmap->entries[i]->base + mmap->entries[i]->length;
+        if (end_addr > g_bootinfo.mem.max_phys_addr) {
+            g_bootinfo.mem.max_phys_addr = end_addr;
+        }
     }
     g_bootinfo.mmap = g_mmap_storage;
-    g_bootinfo.hhdm_offset = hhdm_offset;
+    g_bootinfo.mem.hhdm_offset = hhdm_offset;
 
     /* Graphics */
     g_bootinfo.fb.fb_addr = fb->address;

@@ -37,9 +37,12 @@ typedef struct {
 
 typedef struct {
     /* Memory */
-    mregion_t*    mmap;
-    uint64_t      mmap_entries;
-    uint64_t      hhdm_offset;
+    mregion_t* mmap;
+    struct {
+        uint64_t length;
+        uint64_t hhdm_offset;
+        uint64_t max_phys_addr;
+    } mem;
 
     /* Graphics */
     fbinfo_t fb;
