@@ -1,6 +1,7 @@
 #pragma once
 
 #include <serika/list.h>
+#include <serika/slab.h>
 
 #define PROT_NONE   0x00
 #define PROT_READ   0x01
@@ -32,6 +33,8 @@
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 
 struct page {
-    list_node page_list;
-    bool      is_free;
+    list_node   page_list;
+    bool        is_free;
+
+    struct slab slab;
 };
