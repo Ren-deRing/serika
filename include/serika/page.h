@@ -31,7 +31,7 @@
 
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 
-typedef struct {
+struct page {
     list_node page_list;
     bool      is_free;
-} page_t;
+};

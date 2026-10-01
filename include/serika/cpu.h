@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+
 #define MAX_CPUS 256
 
 struct cpu {

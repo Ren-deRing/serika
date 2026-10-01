@@ -15,7 +15,7 @@ typedef struct {
 
 typedef struct {
     buddy_order orders[MAX_BUDDY_ORDER];
-    page_t     *mmap;
+    struct page     *mmap;
     uintptr_t   mmap_phys;
     size_t      mmap_size;
     size_t      total_pages;
@@ -27,11 +27,11 @@ typedef struct {
 
 buddy_t g_buddy;
 
-page_t* pfn_to_page(size_t pfn) {
+struct page* pfn_to_page(size_t pfn) {
     return &g_buddy.mmap[pfn];
 }
 
-size_t page_to_pfn(page_t* pg) {
+size_t page_to_pfn(struct page* pg) {
     return (size_t)(pg - g_buddy.mmap);
 }
 
@@ -45,20 +45,20 @@ void* alloc_pages(int order) {
         list_del(node);
         g_buddy.orders[curr_order].free_count--;
 
-        size_t pfn = page_to_pfn((page_t*)node);
+        size_t pfn = page_to_pfn((struct page*)node);
 
         while (curr_order > order) {
             curr_order--;
 
             size_t buddy_pfn = pfn ^ (1ULL << curr_order);
-            page_t* buddy = pfn_to_page(buddy_pfn);
+            struct page* buddy = pfn_to_page(buddy_pfn);
             buddy->is_free = true;
 
             list_add(&buddy->page_list, &g_buddy.orders[curr_order].free_list);
             g_buddy.orders[curr_order].free_count++;
         }
 
-        page_t* page = pfn_to_page(pfn);
+        struct page* page = pfn_to_page(pfn);
         page->is_free = false;
 
         g_buddy.free_pages -= (1ULL << order);
@@ -77,7 +77,7 @@ void free_pages(void* addr, int order) {
 
     while (curr_order < MAX_BUDDY_ORDER - 1) {
         size_t buddy_pfn = pfn ^ (1ULL << curr_order);
-        page_t* buddy = pfn_to_page(buddy_pfn);
+        struct page* buddy = pfn_to_page(buddy_pfn);
 
         if (!buddy->is_free) break;
 
@@ -89,7 +89,7 @@ void free_pages(void* addr, int order) {
         curr_order++;
     }
 
-    page_t* page = pfn_to_page(pfn);
+    struct page* page = pfn_to_page(pfn);
     page->is_free = true;
     list_add_tail(&page->page_list, &g_buddy.orders[curr_order].free_list);
     g_buddy.orders[curr_order].free_count++;
@@ -106,7 +106,7 @@ bool pmm_frame_in_pool(uint64_t pfn) {
     if (phys >= g_buddy.mmap_phys && phys < g_buddy.mmap_phys + g_buddy.mmap_size)
         return false;
 
-    mregion_t *mmap = g_bootinfo.mmap;
+    struct mregion *mmap = g_bootinfo.mmap;
     for (uint32_t i = 0; i < g_bootinfo.mem.length; i++) {
         if (mmap[i].type != MMAP_FREE) continue;
 
@@ -131,10 +131,10 @@ void buddy_init() {
 
     /* Calculate buddy map size */
     g_buddy.total_pages = ALIGN_UP(g_bootinfo.mem.max_phys_addr, PAGE_SIZE) / PAGE_SIZE;
-    size_t array_size = ALIGN_UP(g_buddy.total_pages * sizeof(page_t), PAGE_SIZE);
+    size_t array_size = ALIGN_UP(g_buddy.total_pages * sizeof(struct page), PAGE_SIZE);
 
     /* Find suitable region for map */
-    mregion_t *mmap = g_bootinfo.mmap;
+    struct mregion *mmap = g_bootinfo.mmap;
     uint32_t length = g_bootinfo.mem.length;
     uintptr_t array_phys = 0;
 
@@ -160,7 +160,7 @@ void buddy_init() {
 
     g_buddy.mmap_phys = array_phys;
     g_buddy.mmap_size = array_size;
-    g_buddy.mmap = (page_t*)(array_phys + HHDM_OFFSET);
+    g_buddy.mmap = (struct page*)(array_phys + HHDM_OFFSET);
 
     memset(g_buddy.mmap, 0, array_size);
 
@@ -210,7 +210,7 @@ void buddy_init() {
                 }
 
                 size_t pfn = PHYS_TO_PFN(curr_addr);
-                page_t* pg = pfn_to_page(pfn);
+                struct page* pg = pfn_to_page(pfn);
 
                 pg->is_free = true;
                 list_add_tail(&pg->page_list, &g_buddy.orders[target_order].free_list);

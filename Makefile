@@ -1,6 +1,8 @@
 OUTPUT := serika.elf
 ARCH   ?= x86_64
 
+MAKEFLAGS += --no-print-directory
+
 export BASE_DIR   := $(shell pwd)
 export BUILD_DIR  := $(BASE_DIR)/build
 export DEPS_DIR   := $(BASE_DIR)/deps
@@ -56,12 +58,13 @@ endif
 
 $(SUBDIRS):
 	@mkdir -p $(OBJ_DIR)/$@
+	@echo MK: $@
 	@$(MAKE) -C $@ ARCH=$(ARCH)
 
 $(BIN_DIR)/$(OUTPUT): $(SUBDIRS) $(DRV_BUILTIN)
 	@mkdir -p $(BIN_DIR)
 	@echo "LD: $@"
-	$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
+	@$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
 
 setup:
 	@if [ ! -d "$(LIMINE_DIR)" ]; then \
@@ -75,23 +78,29 @@ build: all
 	@mkdir -p $(IMAGE_ROOT)/boot/limine
 	@mkdir -p $(IMAGE_ROOT)/EFI/BOOT
 
-	# copy limine files
-	@cp -v $(LIMINE_DIR)/limine-bios.sys \
+	@# copy limine files
+	@echo CP: limine files
+	@cp $(LIMINE_DIR)/limine-bios.sys \
 	       $(LIMINE_DIR)/limine-bios-cd.bin \
 	       $(LIMINE_DIR)/limine-uefi-cd.bin \
 	       $(IMAGE_ROOT)/boot/limine/
 
-	# limine config
-	@cp -v $(BASE_DIR)/limine.conf $(IMAGE_ROOT)/boot/limine/
+	@# limine config
+	@echo CP: limine config
+	@cp $(BASE_DIR)/limine.conf $(IMAGE_ROOT)/boot/limine/
 
-	# kernel
-	@cp -v $(BIN_DIR)/$(OUTPUT) $(IMAGE_ROOT)/boot/
+	@# kernel
+	@echo CP: kernel
+	@cp $(BIN_DIR)/$(OUTPUT) $(IMAGE_ROOT)/boot/
 
-	# limine EFIs
-	@cp -v $(LIMINE_EFI) $(IMAGE_ROOT)/EFI/BOOT/
+	@# limine EFIs
+	@echo CP: limine EFIs
+	@cp $(LIMINE_EFI) $(IMAGE_ROOT)/EFI/BOOT/
 
-	# build iso
+	@# build iso
+	@echo BUILD: ISO
 	@xorriso -as mkisofs \
+		-quiet \
 		-R -r -J \
 		-b boot/limine/limine-bios-cd.bin \
 		-no-emul-boot \
@@ -100,10 +109,11 @@ build: all
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part \
 		--efi-boot-image \
-		$(IMAGE_ROOT) -o $(IMAGE)
+		$(IMAGE_ROOT) -o $(IMAGE) \
 
 run: build
-	qemu-system-x86_64 \
+	@echo QEMU
+	@qemu-system-x86_64 \
 		-machine q35 \
 		-cdrom $(IMAGE) \
 		-m 8G \

@@ -7,12 +7,12 @@ bootinfo_t g_bootinfo;
 #define MAX_MMAP_ENTRIES 512
 #define MAX_CORE_ENTRIES 256
 
-static mregion_t  g_mmap_storage[MAX_MMAP_ENTRIES];
-static coreinfo_t g_core_storage[MAX_CORE_ENTRIES];
+static struct mregion g_mmap_storage[MAX_MMAP_ENTRIES];
+static struct core    g_core_storage[MAX_CORE_ENTRIES];
 
 struct limine_mp_info;
 
-extern void start_ap(coreinfo_t* info);
+extern void start_ap(struct core* info);
 void limine_ap_entry(struct limine_mp_info* info);
 
 extern void start_init();
@@ -117,6 +117,6 @@ void boot_entry(void) {
 }
 
 void limine_ap_entry(struct limine_mp_info* info) {
-    coreinfo_t* core = (coreinfo_t*)info->extra_argument;
+    struct core* core = (struct core*)info->extra_argument;
     start_ap(core);
 }

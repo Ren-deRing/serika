@@ -14,30 +14,30 @@ typedef enum {
     MMAP_FRAMEBUFFER
 } mtype_t;
 
-typedef struct {
+struct mregion {
     uint64_t base;
     uint64_t length;
     uint32_t type;
-} mregion_t;
+};
 
-typedef struct {
+struct framebuffer {
     void* fb_addr;
     uint32_t width;
     uint32_t height;
     uint32_t pitch;
     uint32_t bpp;
-} fbinfo_t;
+};
 
-typedef struct {
+struct core {
     uint32_t logic_id;
     uint32_t hw_id;        // x86_64: Local APIC ID / AArch64: MPIDR
     void* boot_stack_ptr;
     void* extra_info;      // reserved
-} coreinfo_t;
+};
 
 typedef struct {
     /* Memory */
-    mregion_t* mmap;
+    struct mregion* mmap;
     struct {
         uint64_t length;
         uint64_t hhdm_offset;
@@ -45,7 +45,7 @@ typedef struct {
     } mem;
 
     /* Graphics */
-    fbinfo_t fb;
+    struct framebuffer fb;
 
     /* Kernel Binary */
     struct {
@@ -57,9 +57,9 @@ typedef struct {
 
     /* Multi-Processor */
     struct {
-        uint32_t  total_cores;
-        coreinfo_t* cores;
-        uint32_t  bsp_hw_id;
+        uint32_t     total_cores;
+        struct core* cores;
+        uint32_t     bsp_hw_id;
     } smp;
 
     /* Initial RAM Disk */
