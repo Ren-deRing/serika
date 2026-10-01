@@ -3,7 +3,6 @@
 #include <serika/list.h>
 #include <serika/page.h>
 #include <serika/panic.h>
-#include <serika/printk.h>
 #include <serika/string.h>
 
 #include <stdint.h>
@@ -14,14 +13,14 @@ typedef struct {
 } buddy_order;
 
 typedef struct {
-    buddy_order orders[MAX_BUDDY_ORDER];
-    struct page     *mmap;
-    uintptr_t   mmap_phys;
-    size_t      mmap_size;
-    size_t      total_pages;
-    uintptr_t   mem_start;
-    uintptr_t   mem_end;
-    size_t      free_pages;
+    buddy_order  orders[MAX_BUDDY_ORDER];
+    struct page *mmap;
+    uintptr_t    mmap_phys;
+    size_t       mmap_size;
+    size_t       total_pages;
+    uintptr_t    mem_start;
+    uintptr_t    mem_end;
+    size_t       free_pages;
 } buddy_t;
 
 
@@ -38,26 +37,33 @@ size_t page_to_pfn(struct page* pg) {
 void* alloc_pages(int order) {
     if (order < 0 || order >= MAX_BUDDY_ORDER) return NULL;
 
+    /* Find free page */
     for (int curr_order = order; curr_order < MAX_BUDDY_ORDER; curr_order++) {
         if (list_empty(&g_buddy.orders[curr_order].free_list)) continue;
-        
+        /* Free page is found */
+
+        /* Delete from freelist */
         list_node* node = g_buddy.orders[curr_order].free_list.next;
         list_del(node);
         g_buddy.orders[curr_order].free_count--;
 
         size_t pfn = page_to_pfn((struct page*)node);
 
+        /* Divide into buddies until the target order is reached */
         while (curr_order > order) {
             curr_order--;
 
+            /* Find buddy */
             size_t buddy_pfn = pfn ^ (1ULL << curr_order);
             struct page* buddy = pfn_to_page(buddy_pfn);
-            buddy->is_free = true;
 
+            /* Set buddy to available (free) */
+            buddy->is_free = true;
             list_add(&buddy->page_list, &g_buddy.orders[curr_order].free_list);
             g_buddy.orders[curr_order].free_count++;
         }
 
+        /* Set page to in use */
         struct page* page = pfn_to_page(pfn);
         page->is_free = false;
 
@@ -66,21 +72,27 @@ void* alloc_pages(int order) {
         return (void*)PFN_TO_PHYS(pfn);
     }
 
+    /* OOM */
     return NULL;
 }
 
 void free_pages(void* addr, int order) {
     if (addr == NULL || order < 0 || order >= MAX_BUDDY_ORDER) return;
 
+    /* Find free target page's pfn */
     size_t pfn = PHYS_TO_PFN((uintptr_t)addr);
     int curr_order = order;
 
+    /* Merge until no buddies left to merge with */
     while (curr_order < MAX_BUDDY_ORDER - 1) {
+        /* Find buddy */
         size_t buddy_pfn = pfn ^ (1ULL << curr_order);
         struct page* buddy = pfn_to_page(buddy_pfn);
 
+        /* Buddy is in use; cannot merge */
         if (!buddy->is_free) break;
 
+        /* Delete buddy */
         list_del(&buddy->page_list);
         buddy->is_free = false;
         g_buddy.orders[curr_order].free_count--;
@@ -89,36 +101,13 @@ void free_pages(void* addr, int order) {
         curr_order++;
     }
 
+    /* Set final page to available (free) */
     struct page* page = pfn_to_page(pfn);
     page->is_free = true;
     list_add_tail(&page->page_list, &g_buddy.orders[curr_order].free_list);
     g_buddy.orders[curr_order].free_count++;
 
     g_buddy.free_pages += (1ULL << order);
-}
-
-bool pmm_frame_in_pool(uint64_t pfn) {
-    if (pfn < BUDDY_POOL_START_PFN) return false;
-
-    uintptr_t phys = PFN_TO_PHYS(pfn);
-    if (phys < 0x100000ULL) return false;
-
-    if (phys >= g_buddy.mmap_phys && phys < g_buddy.mmap_phys + g_buddy.mmap_size)
-        return false;
-
-    struct mregion *mmap = g_bootinfo.mmap;
-    for (uint32_t i = 0; i < g_bootinfo.mem.length; i++) {
-        if (mmap[i].type != MMAP_FREE) continue;
-
-        uintptr_t start = ALIGN_UP(mmap[i].base, PAGE_SIZE);
-        uintptr_t end   = ALIGN_DOWN(mmap[i].base + mmap[i].length, PAGE_SIZE);
-        if (start < 0x100000ULL) start = 0x100000ULL;
-        if (end <= start) continue;
-
-        if (phys >= start && phys + PAGE_SIZE <= end) return true;
-    }
-
-    return false;
 }
 
 void buddy_init() {
