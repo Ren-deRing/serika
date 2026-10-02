@@ -30,6 +30,8 @@ ftrace_caller:
         rsp+56  saved rcx
         rsp+64  saved rax
         rsp+72  return address (= original function + 5)
+        ...
+        rsp+80  caller's return address
 
         The patched call(rel32) is 5 bytes long, so the return address
         points 5 bytes past the original function's entry.
@@ -37,6 +39,7 @@ ftrace_caller:
 
     mov 72(%rsp), %rdi
     sub $5, %rdi
+    mov 80(%rsp), %rsi
     call ftrace_trace
 
     pop %r11

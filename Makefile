@@ -16,6 +16,10 @@ IMAGE_ROOT := $(BUILD_DIR)/iso_root
 
 LIMINE_DIR := $(DEPS_DIR)/limine
 
+KSYMBOLS_TOOL := $(BASE_DIR)/tools/ksymbols.py
+KSYMBOLS_SRC  := $(BUILD_DIR)/ksymbols.c
+KSYMBOLS_OBJ  := $(OBJ_DIR)/ksymbols.o
+
 # Except for drivers.
 SUBDIRS := kernel init arch mm tests
 
@@ -58,12 +62,45 @@ endif
 
 $(SUBDIRS):
 	@mkdir -p $(OBJ_DIR)/$@
-	@echo MK: $@
+	@echo "MK    : $@"
 	@$(MAKE) -C $@ ARCH=$(ARCH)
 
 $(BIN_DIR)/$(OUTPUT): $(SUBDIRS) $(DRV_BUILTIN)
+	@# First pass
+
+	@echo "KSYMS : $@ (stubs)"
+	@python3 $(KSYMBOLS_TOOL) --stub $(KSYMBOLS_SRC)
+
+	@echo "CC    : $(KSYMBOLS_SRC)"
+	@mkdir -p $(dir $(KSYMBOLS_OBJ))
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $(KSYMBOLS_SRC) -o $(KSYMBOLS_OBJ)
+
 	@mkdir -p $(BIN_DIR)
-	@echo "LD: $@"
+	@echo "LD    : $@"
+	@$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
+
+	@echo "KSYMS : $@"
+	@python3 $(KSYMBOLS_TOOL) $@ $(KSYMBOLS_SRC)
+
+	@echo "CC    : $(KSYMBOLS_SRC)"
+	@mkdir -p $(dir $(KSYMBOLS_OBJ))
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $(KSYMBOLS_SRC) -o $(KSYMBOLS_OBJ)
+
+	@# Second pass
+
+	@echo "LD    : $@ (ksymbols)"
+	@$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
+
+	@echo "KSYMS : $@"
+	@python3 $(KSYMBOLS_TOOL) $@ $(KSYMBOLS_SRC)
+
+	@echo "CC    : $(KSYMBOLS_SRC)"
+	@mkdir -p $(dir $(KSYMBOLS_OBJ))
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $(KSYMBOLS_SRC) -o $(KSYMBOLS_OBJ)
+
+	@# Third pass
+
+	@echo "LD    : $@ (ksymbols)"
 	@$(LD) $(LDFLAGS) $$(find $(OBJ_DIR) -name "*.o" -not -path "$(OBJ_DIR)/drivers/*") $(DRV_BUILTIN) -o $@
 
 setup:
@@ -79,26 +116,26 @@ build: all
 	@mkdir -p $(IMAGE_ROOT)/EFI/BOOT
 
 	@# copy limine files
-	@echo CP: limine files
+	@echo "CP    : limine files"
 	@cp $(LIMINE_DIR)/limine-bios.sys \
 	       $(LIMINE_DIR)/limine-bios-cd.bin \
 	       $(LIMINE_DIR)/limine-uefi-cd.bin \
 	       $(IMAGE_ROOT)/boot/limine/
 
 	@# limine config
-	@echo CP: limine config
+	@echo "CP    : limine config"
 	@cp $(BASE_DIR)/limine.conf $(IMAGE_ROOT)/boot/limine/
 
 	@# kernel
-	@echo CP: kernel
+	@echo "CP    : kernel"
 	@cp $(BIN_DIR)/$(OUTPUT) $(IMAGE_ROOT)/boot/
 
 	@# limine EFIs
-	@echo CP: limine EFIs
+	@echo "CP    : limine EFIs"
 	@cp $(LIMINE_EFI) $(IMAGE_ROOT)/EFI/BOOT/
 
 	@# build iso
-	@echo BUILD: ISO
+	@echo "BUILD : ISO"
 	@xorriso -as mkisofs \
 		-quiet \
 		-R -r -J \
@@ -112,7 +149,7 @@ build: all
 		$(IMAGE_ROOT) -o $(IMAGE) \
 
 run: build
-	@echo QEMU
+	@echo "QEMU  :"
 	@qemu-system-x86_64 \
 		-machine q35 \
 		-cdrom $(IMAGE) \

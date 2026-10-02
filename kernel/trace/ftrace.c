@@ -2,6 +2,7 @@
 #include <serika/ftrace.h>
 #include <serika/printk.h>
 
+#include <serika/symbol.h>
 #include <stdint.h>
 
 extern void ftrace_caller();
@@ -9,9 +10,10 @@ extern void ftrace_caller();
 extern uintptr_t __start_patchable_functions[];
 extern uintptr_t __end_patchable_functions[];
 
-notrace void ftrace_trace(uintptr_t ip)
-{
-    printk("ftrace: %p\n", (void *)ip);
+notrace void ftrace_trace(uintptr_t callee, uintptr_t ret) {
+    (void) ret;
+    const struct ksymbol *symbol = ksymbol_find(callee);
+    printk("[<%p>] %s\n", (void *)callee, ksymbol_name(symbol));
 }
 
 notrace static void ftrace_control(enum trace_t type) {

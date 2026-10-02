@@ -10,10 +10,10 @@ all: $(OBJS)
 
 $(OBJ_DIR)/arch/x86_64/%.c.o: %.c
 	@mkdir -p $(dir $@)
-	@echo "CC: $<"
+	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/arch/x86_64/%.S.o: %.S
 	@mkdir -p $(dir $@)
-	@echo "CC: $<"
+	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@

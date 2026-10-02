@@ -10,5 +10,5 @@ DRV_BUILTIN += $(SERIAL_OBJS)
 
 $(OBJ_DIR)/$(SERIAL_DIR)/%.c.o: $(SERIAL_DIR)/%.c
 	@mkdir -p $(dir $@)
-	@echo "CC: $<"
+	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@

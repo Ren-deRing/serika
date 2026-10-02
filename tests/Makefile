@@ -10,10 +10,10 @@ all: $(OBJS)
 
 $(OBJ_DIR)/tests/%.c.o: %.c
 	@mkdir -p $(dir $@)
-	@echo "CC: $<"
+	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/tests/%.S.o: %.S
 	@mkdir -p $(dir $@)
-	@echo "CC: $<"
+	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
