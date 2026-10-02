@@ -3,12 +3,12 @@
 #include <stdint.h>
 
 typedef struct {
-	uint16_t limit_low;
-	uint16_t base_low;
-	uint8_t base_mid;
-	uint8_t access;
-	uint8_t flags;
-	uint8_t base_high;
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t  base_mid;
+    uint8_t  access;
+    uint8_t  flags;
+    uint8_t  base_high;
 } __attribute__((packed)) gdt_entry_t;
 
 typedef struct {
@@ -23,15 +23,14 @@ typedef struct {
 } __attribute__((packed)) tss_descriptor_t;
 
 typedef struct tss_entry {
-	uint32_t reserved;
-	uint64_t rsp[3];
-	uint32_t reserved1;
-	uint64_t ist[7];
-	uint32_t reserved2;
-	uint32_t reserved3;
-	uint16_t iomap_base;
-    uint16_t reserved4;
-} __attribute__ ((packed)) tss_entry_t;
+    uint32_t reserved0;
+    uint64_t rsp[3];
+    uint64_t reserved1;
+    uint64_t ist[7];
+    uint64_t reserved2;
+    uint16_t iomap_base;
+    uint16_t reserved3;
+} __attribute__((packed)) tss_entry_t;
 
 typedef struct {
     uint16_t limit;
