@@ -144,7 +144,7 @@ void buddy_init() {
         }
     }
 
-    if (!array_phys || array_phys == 0) panic("No suitable region for buddy memory map.");
+    if (!array_phys || array_phys == 0) panic("buddy: no suitable region for buddy memory map.");
     uintptr_t array_end = array_phys + array_size;
 
     g_buddy.mmap_phys = array_phys;

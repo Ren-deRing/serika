@@ -45,7 +45,8 @@ static inline bool list_empty(const list_node *head) {
     return head->next == head;
 }
 
-#ifndef container_of
 #define container_of(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
-#endif
+
+#define list_first(head, type, member) \
+    container_of((head)->next, type, member)

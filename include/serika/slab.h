@@ -22,7 +22,9 @@ struct slab {
 };
 
 void *slab_alloc(struct kmem_cache *cache);
-void  slab_free(struct kmem_cache *cache, void *obj);
+void  slab_free(void *obj);
 
 void *kmalloc(size_t size);
 void  kfree(void *ptr);
+
+void slab_init();

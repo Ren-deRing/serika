@@ -27,8 +27,8 @@
 #define ALIGN_UP(addr, align)   (((addr) + (align) - 1) & ~((align) - 1))
 #define ALIGN_DOWN(addr, align) ((addr) & ~((align) - 1))
 
-#define P2V(addr) (phys + HHDM_OFFSET)
-#define V2P(addr) (phys - HHDM_OFFSET)
+#define P2V(addr) (addr + HHDM_OFFSET)
+#define V2P(addr) (addr - HHDM_OFFSET)
 
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 
