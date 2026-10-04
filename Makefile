@@ -1,13 +1,14 @@
 OUTPUT := serika.elf
 ARCH   ?= x86_64
 
-MAKEFLAGS += --no-print-directory
+MAKEFLAGS += -s
 
 export BASE_DIR   := $(shell pwd)
 export BUILD_DIR  := $(BASE_DIR)/build
 export DEPS_DIR   := $(BASE_DIR)/deps
 export BIN_DIR    := $(BASE_DIR)/bin
 export OBJ_DIR    := $(BUILD_DIR)/obj
+export TOOL_DIR   := $(BASE_DIR)/tools
 
 SETUP_FLAG := .setup_done
 
@@ -16,9 +17,14 @@ IMAGE_ROOT := $(BUILD_DIR)/iso_root
 
 LIMINE_DIR := $(DEPS_DIR)/limine
 
-KSYMBOLS_TOOL := $(BASE_DIR)/tools/ksymbols.py
+KSYMBOLS_TOOL := $(TOOL_DIR)/ksymbols.py
 KSYMBOLS_SRC  := $(BUILD_DIR)/ksymbols.c
 KSYMBOLS_OBJ  := $(OBJ_DIR)/ksymbols.o
+
+KOFFSETS_TOOL   := $(TOOL_DIR)/koffsets.py
+KOFFSETS_HEADER := $(BASE_DIR)/include/serika/offsets.h
+
+OFFSETS += include/serika/cpu.h cpu include/serika/task.h task
 
 # Except for drivers.
 SUBDIRS := kernel init arch mm tests
@@ -29,6 +35,7 @@ ifeq ($(ARCH), x86_64)
     ARCH_CFLAGS  := -m64 -march=x86-64 -mno-red-zone -fpatchable-function-entry=5
     ARCH_LDFLAGS := -m elf_x86_64
     LIMINE_EFI   := $(LIMINE_DIR)/BOOTX64.EFI
+	OFFSETS      += arch/x86_64/include/asm/task.h arch_task arch/x86_64/include/asm/cpu.h arch_cpu 
 	# add your architecture here...
 endif
 
@@ -60,12 +67,16 @@ ifeq ($(wildcard $(SETUP_FLAG)),)
 	@exit 1
 endif
 
+offsets:
+	@echo "KOFFS : $(OFFSETS)"
+	@python3 $(KOFFSETS_TOOL) $(OFFSETS) $(KOFFSETS_HEADER)
+
 $(SUBDIRS):
 	@mkdir -p $(OBJ_DIR)/$@
 	@echo "MK    : $@"
 	@$(MAKE) -C $@ ARCH=$(ARCH)
 
-$(BIN_DIR)/$(OUTPUT): $(SUBDIRS) $(DRV_BUILTIN)
+$(BIN_DIR)/$(OUTPUT): offsets $(SUBDIRS) $(DRV_BUILTIN)
 	@# First pass
 
 	@echo "KSYMS : $@ (stubs)"
