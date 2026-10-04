@@ -27,4 +27,6 @@ void  slab_free(void *obj);
 void *kmalloc(size_t size);
 void  kfree(void *ptr);
 
+void *kmalloc_aligned(size_t align, size_t size);
+
 void slab_init();

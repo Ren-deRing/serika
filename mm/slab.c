@@ -30,6 +30,17 @@ struct kmem_cache *find_cache(size_t size) {
     return NULL;
 }
 
+struct kmem_cache *find_cache_aligned(size_t size, size_t align) {
+    size = ALIGN_UP(size, align);
+
+    for (size_t i = 0; i < KMALLOC_CACHE_COUNT; i++) {
+        if (kmalloc_caches[i].size >= size && kmalloc_caches[i].size % align == 0)
+            return &kmalloc_caches[i];
+    }
+
+    return NULL;
+}
+
 static void init_page(struct page *page, uintptr_t phys, struct kmem_cache *cache) {
     uint64_t base = P2V(phys);
 
@@ -125,6 +136,15 @@ void *kmalloc(size_t size) {
 
     if (!cache)
         return NULL;
+
+    return slab_alloc(cache);
+}
+
+void *kmalloc_aligned(size_t align, size_t size) {
+    if (!align || (align & (align - 1))) return NULL;
+
+    struct kmem_cache *cache = find_cache_aligned(size, align);
+    if (!cache) return NULL;
 
     return slab_alloc(cache);
 }
