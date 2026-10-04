@@ -3,15 +3,21 @@
 #include <serika/printk.h>
 
 #include <serika/symbol.h>
-#include <stdint.h>
+
+#include <stdbool.h>
 
 extern void ftrace_caller();
 
 extern uintptr_t __start_patchable_functions[];
 extern uintptr_t __end_patchable_functions[];
 
+/* TODO: temporary */
+bool all_patched = false;
+
 notrace void ftrace_trace(uintptr_t callee, uintptr_t ret) {
     (void) ret;
+    if (!all_patched) return;
+
     const struct ksymbol *symbol = ksymbol_find(callee);
     printk("[<%p>] %s\n", (void *)callee, ksymbol_name(symbol));
 }
@@ -26,9 +32,12 @@ notrace static void ftrace_control(enum trace_t type) {
 
     printk("ftrace: tracer address: %lx\n", (uintptr_t)ftrace_caller);
     for (int i = 0; i<count; i++) {
-        printk("function [%d]: %lx\n", i, addr[i]);
+        const struct ksymbol *symbol = ksymbol_find(addr[i]);
+        printk("patch: <%p> %s\n", (void *)addr[i], ksymbol_name(symbol));
         patch_ftrace((void *) addr[i], ftrace_caller, type);
     }
+
+    all_patched = true;
 }
 
 notrace void ftrace_enable() { ftrace_control(TRACE_CALL); }

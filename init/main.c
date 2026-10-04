@@ -19,7 +19,7 @@ notrace void start_init(void) {
 
     printk("\x1b[2J\x1b[H");
 
-    // ftrace_enable();
+    ftrace_enable();
 
     printk("Hello serika\n");
 

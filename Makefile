@@ -164,13 +164,13 @@ run: build
 	@qemu-system-x86_64 \
 		-machine q35 \
 		-cdrom $(IMAGE) \
-		-m 8G \
+		-m 256M \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
 		-serial stdio \
-		-d int \
 		-no-reboot \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
+#		-S -s
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
