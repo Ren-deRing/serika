@@ -54,6 +54,36 @@ void wrmsr(uint32_t msr, uint64_t val) {
     );
 }
 
+uintptr_t read_cr3(void) {
+    uintptr_t phys;
+    asm __volatile__(
+        "mov %%cr3, %0"
+        : "=r" (phys)
+    );
+    return phys;
+}
+
+void write_cr3(uintptr_t phys) {
+    asm __volatile__(
+        "mov %0, %%cr3"
+        :
+        : "r" (phys)
+        : "memory"
+    );
+}
+
+void flush_tlb(uintptr_t virt) {
+    asm __volatile__("invlpg (%0)" ::"r"(virt) : "memory");
+}
+
+void flush_tlb_all(void) {
+    uintptr_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    asm volatile("mov %0, %%cr4" :: "r"(cr4 & ~(1ULL << 7)) : "memory");
+    asm volatile("mov %0, %%cr3" :: "r"(read_cr3()) : "memory");
+    asm volatile("mov %0, %%cr4" :: "r"(cr4) : "memory");
+}
+
 void cpuid(uint32_t leaf, uint32_t subleaf,
                                 uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
     asm volatile("cpuid"

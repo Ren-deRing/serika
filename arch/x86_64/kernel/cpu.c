@@ -82,7 +82,7 @@ void tsc_init(uint64_t* tsc_freq_hz) {
         }
     }
 
-    panic("failed to determine TSC frequency"); // what is this?
+    panic("cpu: failed to determine tsc frequency"); // what is this?
 }
 
 volatile uint32_t logic_id = 0;
