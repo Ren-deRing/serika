@@ -64,7 +64,7 @@ static void init_page(struct page *page, uintptr_t phys, struct kmem_cache *cach
 }
 
 void* slab_alloc(struct kmem_cache *cache) {
-    spin_lock(&cache->lock);
+    uint64_t flags = spin_lock_irqsave(&cache->lock);
 
     struct page *page;
 
@@ -79,7 +79,7 @@ void* slab_alloc(struct kmem_cache *cache) {
         uintptr_t phys = (uintptr_t)alloc_pages(0);
         if (!phys) {
             /* Failed to allocate page */
-            spin_unlock(&cache->lock);
+            spin_unlock_irqrestore(&cache->lock, flags);
             return NULL;
         }
         page = pfn_to_page(PHYS_TO_PFN(phys));
@@ -102,7 +102,7 @@ void* slab_alloc(struct kmem_cache *cache) {
         list_add(&page->page_list, &cache->partial);
     }
 
-    spin_unlock(&cache->lock);
+    spin_unlock_irqrestore(&cache->lock, flags);
 
     return obj;
 }
@@ -112,7 +112,7 @@ void slab_free(void *obj) {
     struct slab *slab = &page->slab;
     struct kmem_cache *cache = slab->cache;
 
-    spin_lock(&cache->lock);
+    uint64_t flags = spin_lock_irqsave(&cache->lock);
 
     bool was_full = slab->inuse == slab->objects;
 
@@ -128,7 +128,7 @@ void slab_free(void *obj) {
         list_add(&page->page_list, &cache->empty);
     }
 
-    spin_unlock(&cache->lock);
+    spin_unlock_irqrestore(&cache->lock, flags);
 }
 
 void *kmalloc(size_t size) {

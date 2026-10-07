@@ -1,6 +1,7 @@
 #include <serika/boot.h>
 #include <serika/buddy.h>
 #include <serika/list.h>
+#include <serika/lock.h>
 #include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/string.h>
@@ -26,6 +27,8 @@ typedef struct {
 
 buddy_t g_buddy;
 
+static spinlock_t g_buddy_lock = SPINLOCK_INITIALIZER; /* irqsave. kfree can run in irq (schedule) */
+
 struct page* pfn_to_page(size_t pfn) {
     return &g_buddy.mmap[pfn];
 }
@@ -36,6 +39,8 @@ size_t page_to_pfn(struct page* pg) {
 
 void* alloc_pages(int order) {
     if (order < 0 || order >= MAX_BUDDY_ORDER) return NULL;
+
+    uint64_t flags = spin_lock_irqsave(&g_buddy_lock);
 
     /* Find free page */
     for (int curr_order = order; curr_order < MAX_BUDDY_ORDER; curr_order++) {
@@ -69,8 +74,11 @@ void* alloc_pages(int order) {
 
         g_buddy.free_pages -= (1ULL << order);
 
+        spin_unlock_irqrestore(&g_buddy_lock, flags);
         return (void*)PFN_TO_PHYS(pfn);
     }
+
+    spin_unlock_irqrestore(&g_buddy_lock, flags);
 
     /* OOM */
     return NULL;
@@ -78,6 +86,8 @@ void* alloc_pages(int order) {
 
 void free_pages(void* addr, int order) {
     if (addr == NULL || order < 0 || order >= MAX_BUDDY_ORDER) return;
+
+    uint64_t flags = spin_lock_irqsave(&g_buddy_lock);
 
     /* Find free target page's pfn */
     size_t pfn = PHYS_TO_PFN((uintptr_t)addr);
@@ -108,6 +118,8 @@ void free_pages(void* addr, int order) {
     g_buddy.orders[curr_order].free_count++;
 
     g_buddy.free_pages += (1ULL << order);
+
+    spin_unlock_irqrestore(&g_buddy_lock, flags);
 }
 
 void buddy_init() {
