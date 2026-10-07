@@ -123,8 +123,6 @@ def main():
     with open(output_path, "w", encoding="UTF-8") as f:
         f.write(generate_c(symbols))
 
-    print(f"{len(symbols)} symbols")
-
     return 0
 
 

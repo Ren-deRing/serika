@@ -1,18 +1,28 @@
+import os
+import subprocess
 import sys
 
-from clang.cindex import CursorKind, Index
+from clang.cindex import CursorKind, Diagnostic, Index
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def _align_up(value, alignment):
-    if alignment <= 0:
-        return value
-
-    return (value + alignment - 1) // alignment * alignment
+CLANG_ARGS = [
+    "-target", "x86_64-unknown-none-elf", # same as $(CC)
+    "-ffreestanding",
+    "-resource-dir", subprocess.check_output(["clang", "-print-resource-dir"], text=True).strip(),
+    f"-I{BASE_DIR}",
+    f"-I{BASE_DIR}/include",
+    f"-I{BASE_DIR}/arch/x86_64/include",
+]
 
 
 def get_offsets(header_path, struct_name):
     index = Index.create()
-    tu = index.parse(header_path)
+    tu = index.parse(header_path, args=CLANG_ARGS)
+
+    for diag in tu.diagnostics:
+        if diag.severity >= Diagnostic.Error:
+            raise RuntimeError(f"{header_path}: {diag}")
 
     try:
         struct_cursor = None
@@ -31,24 +41,12 @@ def get_offsets(header_path, struct_name):
             raise KeyError(struct_name)
 
         offsets = []
-        current_offset = 0
 
         for field in struct_cursor.get_children():
             if field.kind != CursorKind.FIELD_DECL:
                 continue
 
-            field_type = field.type
-            field_size = field_type.get_size()
-            field_align = field_type.get_align()
-
-            if field_size < 0:
-                field_size = 0
-            if field_align <= 0:
-                field_align = 1
-
-            current_offset = _align_up(current_offset, field_align)
-            offsets.append((field.spelling, current_offset))
-            current_offset += field_size
+            offsets.append((field.spelling, field.get_field_offsetof() // 8))
 
         return offsets
 
@@ -139,8 +137,6 @@ def main():
     if output_path is not None:
         with open(output_path, "w", encoding="UTF-8") as f:
             f.write(generate_c(all_entries))
-
-    print(f"{total_fields} fields")
 
     return 0
 
