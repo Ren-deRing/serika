@@ -24,7 +24,7 @@ KSYMBOLS_OBJ  := $(OBJ_DIR)/ksymbols.o
 KOFFSETS_TOOL   := $(TOOL_DIR)/koffsets.py
 KOFFSETS_HEADER := $(BASE_DIR)/include/serika/offsets.h
 
-OFFSETS += include/serika/cpu.h cpu include/serika/task.h task
+OFFSETS += include/serika/cpu.h cpu include/serika/task.h task include/serika/pmap.h pmap
 
 # Except for drivers.
 SUBDIRS := kernel init arch mm tests

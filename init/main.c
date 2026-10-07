@@ -8,9 +8,10 @@
 #include <serika/serial.h>
 #include <serika/buddy.h>
 #include <serika/slab.h>
-
+#include <serika/sched.h>
 #include <serika/symbol.h>
-#include <stdint.h>
+#include <serika/tick.h>
+
 #include <tests/test.h>
 
 notrace void start_init(void) {
@@ -19,13 +20,16 @@ notrace void start_init(void) {
 
     printk("\x1b[2J\x1b[H");
 
-    ftrace_enable();
+    // ftrace_enable();
 
     printk("Hello serika\n");
 
     cpu_init();
     buddy_init();
     slab_init();
+
+    sched_init();
+    tick_init();
     
     test_run_all();
 

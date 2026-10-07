@@ -36,7 +36,10 @@ switch_to:
 
     /* switch address space */
     movq TASK_PMAP_OFFSET(%rsi), %rbx
-    movq PMAP_ROOT_PHYS_OFFSET(%rbx), %rcx
+    testq %rbx, %rbx                        // kthread: no pmap, skipping
+    jz .Lskip_cr3_switch
+
+    movq PMAP_PM_ROOT_PHYS_OFFSET(%rbx), %rcx
     movq %cr3, %rdx
     cmpq %rcx, %rdx
     
@@ -62,8 +65,8 @@ switch_to:
 
     ret
 
-.global user_trampoline
-user_trampoline:
+.global task_trampoline
+task_trampoline:
     popq %r15
     popq %r14
     popq %r13

@@ -38,6 +38,20 @@ struct task {
     struct pmap      *pmap;
 
     enum task_state state;
+
+    int               nice;
+    uint32_t          weight;
+
+    uint64_t          exec_start;    /* tsc */
+    uint64_t          sum_exec;      /* tsc */
+    uint64_t          prev_sum_exec; /* sum_exec when picked */
 };
 
 void switch_to(struct task *prev, struct task *next);
+
+void task_start(void);
+
+struct task *task_create(task_entry_t entry, int nice);
+struct task *task_create_boot(void);
+void task_free(struct task *task);
+void task_exit(void);
