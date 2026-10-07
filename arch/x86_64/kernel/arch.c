@@ -54,6 +54,12 @@ void wrmsr(uint32_t msr, uint64_t val) {
     );
 }
 
+notrace uint64_t rdtsc(void) {
+    uint32_t low, high;
+    asm volatile ("rdtsc" : "=a"(low), "=d"(high));
+    return ((uint64_t)high << 32) | low;
+}
+
 uintptr_t read_cr3(void) {
     uintptr_t phys;
     asm __volatile__(

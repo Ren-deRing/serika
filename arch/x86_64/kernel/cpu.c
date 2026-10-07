@@ -1,4 +1,5 @@
 #include <serika/cpu.h>
+#include <serika/intc.h>
 #include <serika/panic.h>
 
 #include <asm/cpu.h>
@@ -153,6 +154,8 @@ void cpu_init() {
     extern void idt_init();
     gdt_init();
     idt_init();
+
+    lapic_init();
 
     if(enable_fsgsbase() == -1) panic("cpu: unable to enable FSGSBASE -- does your cpu support FSGSBASE?");
     if(enable_xsaves() == -1)   panic("cpu: unable to enable XSAVES -- does your cpu support XSAVES?");

@@ -16,6 +16,9 @@ struct cpu {
 
     uint64_t    tsc_freq_hz;
 
+    uint64_t    ticks;
+    uint64_t    next_deadline; /* tsc */
+
     struct arch_cpu     *arch_cpu_data;
 
     struct runqueue      rq;
