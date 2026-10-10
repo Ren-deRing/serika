@@ -5,6 +5,8 @@
 #include <serika/slab.h>
 #include <serika/string.h>
 
+#include <asm/arch.h>
+
 int arch_task_init(struct task *task) {
     task->tf = (struct trapframe *)((uintptr_t)task->kstack + TASK_KSTACK_SIZE - sizeof(struct trapframe));
 
@@ -74,4 +76,8 @@ int arch_xsaves_init(struct task *task) {
     *xcomp_bv = (1ULL << 63); // compacted format
 
     return 0;
+}
+
+void arch_user_gs_init(void) {
+    wrmsr(IA32_GS_BASE, 0);
 }

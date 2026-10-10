@@ -125,6 +125,7 @@ void task_start(void) {
 
 /* iretq will enable irq */
 notrace void task_start_user(void) {
+    arch_user_gs_init();
     spin_unlock(&curcpu->rq.lock);
 }
 

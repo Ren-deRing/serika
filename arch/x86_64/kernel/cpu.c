@@ -152,8 +152,10 @@ void cpu_init() {
 
     extern void gdt_init();
     extern void idt_init();
+    extern void syscall_init();
     gdt_init();
     idt_init();
+    syscall_init();
 
     lapic_init();
 

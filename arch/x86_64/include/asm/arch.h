@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#define IA32_GS_BASE 0xC0000101
+
 uint64_t rdmsr(uint32_t msr);
 void wrmsr(uint32_t msr, uint64_t val);
 

@@ -10,6 +10,7 @@ struct cpu {
     struct cpu *self;
 
     uint64_t    kstack_top;
+    uint64_t    user_rsp;
 
     uint32_t    id;
     uint32_t    hw_id;

@@ -4,15 +4,16 @@
 
 #define CPU_SELF_OFFSET                0x00000
 #define CPU_KSTACK_TOP_OFFSET          0x00008
-#define CPU_ID_OFFSET                  0x00010
-#define CPU_HW_ID_OFFSET               0x00014
-#define CPU_TSC_FREQ_HZ_OFFSET         0x00018
-#define CPU_TICKS_OFFSET               0x00020
-#define CPU_NEXT_DEADLINE_OFFSET       0x00028
-#define CPU_ARCH_CPU_DATA_OFFSET       0x00030
-#define CPU_RQ_OFFSET                  0x00038
-#define CPU_CURRENT_OFFSET             0x00078
-#define CPU_IDLE_OFFSET                0x00080
+#define CPU_USER_RSP_OFFSET            0x00010
+#define CPU_ID_OFFSET                  0x00018
+#define CPU_HW_ID_OFFSET               0x0001c
+#define CPU_TSC_FREQ_HZ_OFFSET         0x00020
+#define CPU_TICKS_OFFSET               0x00028
+#define CPU_NEXT_DEADLINE_OFFSET       0x00030
+#define CPU_ARCH_CPU_DATA_OFFSET       0x00038
+#define CPU_RQ_OFFSET                  0x00040
+#define CPU_CURRENT_OFFSET             0x00080
+#define CPU_IDLE_OFFSET                0x00088
 #define TASK_VRUNTIME_OFFSET           0x00000
 #define TASK_ID_OFFSET                 0x00008
 #define TASK_SCHED_ENTRY_OFFSET        0x00010
