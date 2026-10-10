@@ -17,3 +17,5 @@ $(OBJ_DIR)/kernel/%.S.o: %.S
 	@mkdir -p $(dir $@)
 	@echo "CC    : $<"
 	@$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+-include $(OBJS:.o=.d)

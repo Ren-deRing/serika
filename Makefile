@@ -50,7 +50,8 @@ export CFLAGS   := -g -O2 -ffreestanding -fno-stack-protector \
 export CPPFLAGS := -I$(BASE_DIR) \
 				   -I$(BASE_DIR)/include \
 				   -I$(BASE_DIR)/arch/$(ARCH)/include \
-                   -D__$(ARCH)__
+                   -D__$(ARCH)__ \
+                   -MMD -MP
 
 export LDFLAGS  := $(ARCH_LDFLAGS) -nostdlib -static --gc-sections \
 				   -no-pie -z max-page-size=0x1000 -T $(BASE_DIR)/arch/$(ARCH)/kernel/linker.ld
@@ -169,6 +170,7 @@ run: build
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
 		-serial stdio \
 		-no-reboot \
+		-smp 4 \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
 #		-S -s
 
