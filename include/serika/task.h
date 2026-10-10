@@ -1,3 +1,5 @@
+#pragma once
+
 #include <asm/cpu.h>
 #include <asm/task.h>
 #include <asm/trapframe.h>
@@ -55,6 +57,7 @@ void task_start(void);
 void task_start_user(void);
 
 struct task *task_create(task_entry_t entry, int nice);
+struct task *task_create_user(const void *code, size_t size, int nice);
 struct task *task_create_boot(void);
 void task_free(struct task *task);
 void task_exit(void);

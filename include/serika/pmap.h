@@ -19,3 +19,4 @@ void pmap_destroy(struct pmap *pmap);
 void pmap_activate(struct pmap *pmap);
 
 int pmap_init(void);
+void kmap_init(void);

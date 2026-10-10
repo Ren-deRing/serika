@@ -1,5 +1,6 @@
 #include <serika/buddy.h>
 #include <serika/page.h>
+#include <serika/panic.h>
 #include <serika/pmap.h>
 #include <serika/slab.h>
 #include <serika/string.h>
@@ -414,7 +415,7 @@ void pmap_activate(struct pmap *pmap) {
 
 int pmap_init(void) {
     uintptr_t pml4_phys = (uintptr_t)alloc_pages(0);
-    if (!pml4_phys) return -1;
+    if (!pml4_phys) panic("pmap: unable to create the kernel pmap -- out of memory?");;
 
     pml4e_t *pml4_virt = (pml4e_t *)P2V(pml4_phys);
     memset(pml4_virt, 0, PAGE_SIZE);

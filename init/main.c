@@ -4,6 +4,8 @@
 #include <serika/cpu.h>
 #include <serika/ftrace.h>
 #include <serika/patch.h>
+#include <serika/panic.h>
+#include <serika/pmap.h>
 #include <serika/printk.h>
 #include <serika/serial.h>
 #include <serika/buddy.h>
@@ -27,6 +29,8 @@ notrace void start_init(void) {
     cpu_init();
     buddy_init();
     slab_init();
+    pmap_init();
+    kmap_init();
 
     sched_init();
     tick_init();

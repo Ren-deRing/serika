@@ -4,6 +4,7 @@
 #include <serika/cpu.h>
 #include <serika/page.h>
 #include <serika/panic.h>
+#include <serika/pmap.h>
 #include <serika/sched.h>
 #include <serika/slab.h>
 #include <serika/string.h>
@@ -20,7 +21,7 @@ static struct task *task_alloc(task_entry_t entry, int nice) {
     task->entry  = entry;
     task->nice   = nice;
     task->weight = sched_prio_to_weight[nice + 20];
-    task->pmap   = NULL; /* kthread, uses whatever cr3 is loaded */
+    task->pmap   = pmap_kernel(); /* kthread. user tasks replace it */
 
     return task;
 }
@@ -48,6 +49,46 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
+/* not runnable until sched_add_task(). */
+struct task *task_create_user(const void *code, size_t size, int nice) {
+    if (size > PAGE_SIZE) return NULL;
+
+    struct task *task = task_alloc((task_entry_t)USER_CODE_BASE, nice);
+    if (!task) return NULL;
+
+    int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
+
+    struct pmap *pmap = pmap_create();
+    uintptr_t code_phys = (uintptr_t)alloc_pages(0);
+    uintptr_t stack_phys = (uintptr_t)alloc_pages(0);
+    uintptr_t kstack_phys = (uintptr_t)alloc_pages(korder);
+
+    if (!pmap || !code_phys || !stack_phys || !kstack_phys) goto fail;
+
+    memset((void *)P2V(code_phys), 0, PAGE_SIZE);
+    memcpy((void *)P2V(code_phys), code, size);
+    memset((void *)P2V(stack_phys), 0, PAGE_SIZE);
+
+    if (pmap_map(pmap, USER_CODE_BASE, code_phys, PAGE_SIZE, PROT_READ | PROT_EXEC | PROT_USER) != 0) goto fail;
+    if (pmap_map(pmap, USER_STACK_TOP - PAGE_SIZE, stack_phys, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_USER) != 0) goto fail;
+
+    task->pmap = pmap;
+    task->kstack = (void *)P2V(kstack_phys);
+    task->kernel_stack_size = TASK_KSTACK_SIZE;
+
+    if (arch_task_init(task) == -1) goto fail;
+
+    return task;
+
+fail:
+    if (pmap) pmap_destroy(pmap);
+    free_pages((void *)code_phys, 0);
+    free_pages((void *)stack_phys, 0);
+    free_pages((void *)kstack_phys, korder);
+    kfree(task);
+    return NULL;
+}
+
 struct task *task_create_boot(void) {
     struct task *task = task_alloc(NULL, 0);
     if (!task) return NULL;
@@ -61,6 +102,12 @@ struct task *task_create_boot(void) {
 }
 
 void task_free(struct task *task) {
+    if (task->pmap != pmap_kernel()) {
+        free_pages((void *)pmap_extract(task->pmap, USER_CODE_BASE), 0);
+        free_pages((void *)pmap_extract(task->pmap, USER_STACK_TOP - PAGE_SIZE), 0);
+        pmap_destroy(task->pmap);
+    }
+
     if (task->kstack) free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
 
     kfree(task->arch.xsaves_area);
