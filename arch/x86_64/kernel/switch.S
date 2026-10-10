@@ -48,6 +48,9 @@ switch_to:
 
 .Lskip_cr3_switch:
     movq TASK_KSTACK_OFFSET(%rsi), %rax     // rsi = next
+    testq %rax, %rax                        // boot task: no kstack, never enters user mode
+    jz .Lskip_kstack_top
+
     addq $16384, %rax                       // kstack_size
     movq %rax, %gs:CPU_KSTACK_TOP_OFFSET
 
@@ -56,6 +59,7 @@ switch_to:
     movq %rax, 4(%rcx)                      // tss->rsp0 = kstack_top
     /* for a now. */
 
+.Lskip_kstack_top:
     popq %r15
     popq %r14
     popq %r13
@@ -64,6 +68,12 @@ switch_to:
     popq %rbp
 
     ret
+
+/* ret from switch_to() lands here, rsp = trapframe */
+.global user_task_entry
+user_task_entry:
+    call task_start_user    // drops the rq lock. irq stays off, iretq loads IF from the trapframe
+    jmp task_trampoline
 
 .global task_trampoline
 task_trampoline:

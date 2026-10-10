@@ -15,4 +15,5 @@ int arch_task_init(struct task *task);
 int arch_kthread_init(struct task *task);
 int arch_xsaves_init(struct task *task);
 
+void user_task_entry();
 void task_trampoline();

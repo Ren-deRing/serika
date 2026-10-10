@@ -27,6 +27,8 @@ struct cpu {
     struct task         *idle;
 } __attribute__((aligned(64)));
 
+extern struct cpu cpus[MAX_CPUS];
+
 void cpu_init();
 
 struct cpu* get_this_core(void);

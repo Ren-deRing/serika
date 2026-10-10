@@ -30,6 +30,11 @@ notrace void start_init(void) {
 
     sched_init();
     tick_init();
+
+    extern void smp_release_aps(void);
+    smp_release_aps();
+
+    printk("smp: %u cpus online\n", g_bootinfo.smp.total_cores);
     
     test_run_all();
 

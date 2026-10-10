@@ -1,5 +1,6 @@
 #include <serika/arch.h>
 #include <serika/buddy.h>
+#include <serika/compiler.h>
 #include <serika/cpu.h>
 #include <serika/page.h>
 #include <serika/panic.h>
@@ -66,10 +67,18 @@ void task_free(struct task *task) {
     kfree(task);
 }
 
-/* irq is already on (arch_task_init) */
+/* schedule() switched to us holding the rq lock, irq off */
 void task_start(void) {
+    spin_unlock(&curcpu->rq.lock);
+    arch_irq_enable();
+
     curcpu->rq.curr->entry();
     task_exit();
+}
+
+/* iretq will enable irq */
+notrace void task_start_user(void) {
+    spin_unlock(&curcpu->rq.lock);
 }
 
 void task_exit(void) {

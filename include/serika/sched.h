@@ -1,6 +1,7 @@
 #pragma once
 
 #include <serika/task.h>
+#include <serika/lock.h>
 
 #include <deps/tree.h>
 #include <stdbool.h>
@@ -9,9 +10,15 @@
 #define SCHED_LATENCY_US  6000 /* every task runs once in here */
 #define SCHED_MIN_GRAN_US 750  /* ...unless there are too many of them */
 
+#define SCHED_BALANCE_TICKS 4 /* balances every this ticks. for idle cpu, every tick */
+
+#define RESCHED_VECTOR    0x21
+
 RB_HEAD(task_tree, task);
 
 struct runqueue {
+    spinlock_t lock;        /* held across switch_to. next task releases */
+
     struct task_tree tasks; /* curr is not in here */
     struct task *curr;
     struct task *dead;      /* freed by next schedule() */
@@ -21,6 +28,7 @@ struct runqueue {
     uint32_t nr_running;    /* curr included, idle not */
 
     bool     need_resched;
+    volatile bool online;
 };
 
 static inline int task_cmp(struct task *a, struct task *b) {
@@ -49,5 +57,7 @@ void schedule();
 void sched_init(void);
 void sched_tick(void);
 void sched_add_task(struct task *task);
+void sched_add_task_cpu(struct task *task, uint32_t cpu);
+uint32_t sched_nr_online(void);
 
 extern const uint32_t sched_prio_to_weight[40];

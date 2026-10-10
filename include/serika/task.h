@@ -45,11 +45,14 @@ struct task {
     uint64_t          exec_start;    /* tsc */
     uint64_t          sum_exec;      /* tsc */
     uint64_t          prev_sum_exec; /* sum_exec when picked */
+
+    bool              pinned;        /* never migrates to another cpu */
 };
 
 void switch_to(struct task *prev, struct task *next);
 
 void task_start(void);
+void task_start_user(void);
 
 struct task *task_create(task_entry_t entry, int nice);
 struct task *task_create_boot(void);

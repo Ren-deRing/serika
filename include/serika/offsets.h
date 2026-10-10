@@ -11,8 +11,8 @@
 #define CPU_NEXT_DEADLINE_OFFSET       0x00028
 #define CPU_ARCH_CPU_DATA_OFFSET       0x00030
 #define CPU_RQ_OFFSET                  0x00038
-#define CPU_CURRENT_OFFSET             0x00068
-#define CPU_IDLE_OFFSET                0x00070
+#define CPU_CURRENT_OFFSET             0x00078
+#define CPU_IDLE_OFFSET                0x00080
 #define TASK_VRUNTIME_OFFSET           0x00000
 #define TASK_ID_OFFSET                 0x00008
 #define TASK_SCHED_ENTRY_OFFSET        0x00010
@@ -28,6 +28,7 @@
 #define TASK_EXEC_START_OFFSET         0x00080
 #define TASK_SUM_EXEC_OFFSET           0x00088
 #define TASK_PREV_SUM_EXEC_OFFSET      0x00090
+#define TASK_PINNED_OFFSET             0x00098
 #define PMAP_PM_ROOT_VIRT_OFFSET       0x00000
 #define PMAP_PM_ROOT_PHYS_OFFSET       0x00008
 #define PMAP_LOCK_OFFSET               0x00010

@@ -3,6 +3,7 @@
 /deps
 
 .cache
+CLAUDE.md
 
 .setup_done
 compile_commands.json

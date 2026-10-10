@@ -15,11 +15,11 @@ int arch_task_init(struct task *task) {
     task->tf->rsp    = USER_STACK_TOP;
     task->tf->cs     = 0x23;
     task->tf->ss     = 0x1B;
-    task->tf->rflags = 0x202;
+    task->tf->rflags = 0x202; // IF
 
     uint64_t *sp = (uint64_t *)task->tf;
 
-    sp--; *sp = (uintptr_t)task_trampoline; // ret
+    sp--; *sp = (uintptr_t)user_task_entry; // ret
     sp--; *sp = 0; // rbp
     sp--; *sp = 0; // rbx
     sp--; *sp = 0; // r12
@@ -46,7 +46,7 @@ int arch_kthread_init(struct task *task) {
     task->tf->rsp    = (uintptr_t)task->tf - 8;
     task->tf->cs     = 0x08;
     task->tf->ss     = 0x10;
-    task->tf->rflags = 0x202; // IF
+    task->tf->rflags = 0x002; // IF off. task_start() turns it on after dropping rq lock
 
     uint64_t *sp = (uint64_t *)task->tf;
 
