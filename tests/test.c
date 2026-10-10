@@ -12,10 +12,17 @@ struct test {
 
 static struct test tests[] = {
     { "buddy merge", test_buddy_merge },
+    { "buddy partial", test_buddy_partial_buddy },
     { "slab reuse",  test_slab_reuse },
     { "slab multi",  test_slab_multi },
-    // { "slab stress", test_slab_stress },
-    // { "slab state",  test_slab_state },
+    { "slab stress", test_slab_stress },
+    { "slab state",  test_slab_state },
+    { "tick rate",   test_tick_rate },
+    { "sched fair",  test_sched_fair },
+    { "sched nice",  test_sched_nice },
+    { "smp online",  test_smp_online },
+    { "smp spread",  test_smp_spread },
+    { "smp balance", test_smp_balance },
 };
 
 void test_run_all() {

@@ -28,7 +28,18 @@ static inline uint32_t rand_u32(void) {
 void test_run_all();
 
 bool test_buddy_merge();
+bool test_buddy_partial_buddy();
+
 bool test_slab_reuse();
 bool test_slab_multi();
 bool test_slab_stress();
 bool test_slab_state();
+
+bool test_tick_rate();
+
+bool test_sched_fair();
+bool test_sched_nice();
+
+bool test_smp_online();
+bool test_smp_spread();
+bool test_smp_balance();
