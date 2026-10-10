@@ -64,6 +64,7 @@ void* alloc_pages(int order) {
 
             /* Set buddy to available (free) */
             buddy->is_free = true;
+            buddy->order = curr_order;
             list_add(&buddy->page_list, &g_buddy.orders[curr_order].free_list);
             g_buddy.orders[curr_order].free_count++;
         }
@@ -97,10 +98,14 @@ void free_pages(void* addr, int order) {
     while (curr_order < MAX_BUDDY_ORDER - 1) {
         /* Find buddy */
         size_t buddy_pfn = pfn ^ (1ULL << curr_order);
+
+        /* Buddy is out of the memory map; cannot merge */
+        if (buddy_pfn >= g_buddy.total_pages) break;
+
         struct page* buddy = pfn_to_page(buddy_pfn);
 
-        /* Buddy is in use; cannot merge */
-        if (!buddy->is_free) break;
+        /* Buddy is in use, or only part of it is free; cannot merge */
+        if (!buddy->is_free || buddy->order != curr_order) break;
 
         /* Delete buddy */
         list_del(&buddy->page_list);
@@ -114,6 +119,7 @@ void free_pages(void* addr, int order) {
     /* Set final page to available (free) */
     struct page* page = pfn_to_page(pfn);
     page->is_free = true;
+    page->order = curr_order;
     list_add_tail(&page->page_list, &g_buddy.orders[curr_order].free_list);
     g_buddy.orders[curr_order].free_count++;
 
@@ -214,6 +220,7 @@ void buddy_init() {
                 struct page* pg = pfn_to_page(pfn);
 
                 pg->is_free = true;
+                pg->order = target_order;
                 list_add_tail(&pg->page_list, &g_buddy.orders[target_order].free_list);
                 g_buddy.orders[target_order].free_count++;
                 g_buddy.free_pages += 1ULL << target_order;

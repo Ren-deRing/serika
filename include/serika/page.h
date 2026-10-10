@@ -15,8 +15,8 @@
 #define PAGE_SHIFT 12
 #define PAGE_SIZE  (1ULL << PAGE_SHIFT)
 
-#define PFN_TO_PHYS(pfn)     (pfn << PAGE_SHIFT)
-#define PHYS_TO_PFN(addr)    (addr >> PAGE_SHIFT)
+#define PFN_TO_PHYS(pfn)     ((pfn) << PAGE_SHIFT)
+#define PHYS_TO_PFN(addr)    ((addr) >> PAGE_SHIFT)
 #define BUDDY_POOL_START_PFN 0x8000ULL
 
 #define PAGE_SHIFT_HUGE 21
@@ -35,6 +35,7 @@
 struct page {
     list_node   page_list;
     bool        is_free;
+    uint8_t     order;
 
     struct slab slab;
 };
