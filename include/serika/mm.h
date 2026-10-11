@@ -24,8 +24,7 @@ RB_HEAD(vma_tree, vma);
 struct mm {
     struct pmap     *pmap;
     struct vma_tree  vmas;  /* never overlap */
-    spinlock_t       lock;  /* vmas, and faults filling the pmap */
-    struct mutex     map_mutex; /* held across a change to the vmas, which may shoot down. brk, mmap_next */
+    struct mutex     lock;  /* vmas, brk, mmap_next, and faults filling the pmap. may sleep: shootdowns */
     uint32_t         users;
 
     uintptr_t        brk_start;

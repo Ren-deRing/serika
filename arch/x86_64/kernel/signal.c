@@ -225,31 +225,39 @@ static void signal_kill(int sig, const struct ksiginfo *info, struct trapframe *
 
 /* irq off, the last stop before user mode, from a syscall or an interrupt */
 void exit_to_user(struct trapframe *tf, bool syscall) {
-    while (this_cpu_read(rq.need_resched)) schedule();
+    for (;;) {
+        while (this_cpu_read(rq.need_resched)) schedule();
 
-    struct ksiginfo info;
-    struct k_sigaction ka;
+        struct ksiginfo info;
+        struct k_sigaction ka;
 
-    int sig = signal_dequeue(&info, &ka);
+        int sig = signal_dequeue(&info, &ka);
 
-    /* a call a signal cut short: again, or -EINTR when a handler without SA_RESTART runs */
-    if (syscall && (long)tf->rax == -ERESTARTSYS) {
-        if (sig && ka.handler != SIG_DFL && !(ka.flags & SA_RESTART)) {
-            tf->rax = -EINTR;
-        } else {
-            tf->rax = tf->error; /* the number, saved at entry */
-            tf->rip -= 2;        /* the syscall instruction */
+        /* a call a signal cut short: again, or -EINTR when a handler without SA_RESTART runs */
+        if (syscall && (long)tf->rax == -ERESTARTSYS) {
+            if (sig && ka.handler != SIG_DFL && !(ka.flags & SA_RESTART)) {
+                tf->rax = -EINTR;
+            } else {
+                tf->rax = tf->error; /* the number, saved at entry */
+                tf->rip -= 2;        /* the syscall instruction */
+            }
         }
+
+        if (!sig) return;
+
+        /* the frame is written through the mm, whose lock sleeps. a signal that comes now is seen on the next pass */
+        arch_irq_enable();
+
+        if (ka.handler == SIG_DFL) signal_kill(sig, &info, tf);
+
+        if (!(ka.flags & SA_RESTORER) || !setup_frame(tf, sig, &ka, &info)) {
+            struct ksiginfo segv = { .signo = SIGSEGV, .code = SI_KERNEL };
+            signal_kill(SIGSEGV, &segv, tf);
+        }
+
+        signal_delivered(sig, &ka);
+
+        /* the last look is with irq off: after it only the iret can let an ipi in, and that lands in user mode */
+        arch_irq_disable();
     }
-
-    if (!sig) return;
-
-    if (ka.handler == SIG_DFL) signal_kill(sig, &info, tf);
-
-    if (!(ka.flags & SA_RESTORER) || !setup_frame(tf, sig, &ka, &info)) {
-        struct ksiginfo segv = { .signo = SIGSEGV, .code = SI_KERNEL };
-        signal_kill(SIGSEGV, &segv, tf);
-    }
-
-    signal_delivered(sig, &ka);
 }

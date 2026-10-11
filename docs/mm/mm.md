@@ -2,17 +2,21 @@
 
 ## Locks
 
-`mm->lock` protects the vma tree, `brk`, `mmap_next`, and the pmap while a fault fills it.
-Its order is `mm->lock`, then the pmap lock, then the buddy and slab locks. A page fault takes
-`mm->lock` with irq on and nothing else held, like a system call.
+`mm->lock` is a mutex. It protects the vma tree, `brk`, `mmap_next`, and the pmap while a fault
+fills it, and it is held across any change to the vmas (`mm_map()`, `mm_unmap()`,
+`mm_protect()`, `mm_mmap()`, `mm_brk()`), shootdowns included. Its order is `mm->lock`, then
+`tlb_mutex`, then the pmap lock, then the buddy and slab locks.
 
-`mm->map_mutex` is held across any change to the vmas (`mm_map()`, `mm_unmap()`,
-`mm_protect()`, `mm_mmap()`, `mm_brk()`), because a change may shoot down, which sleeps.
-It comes before `mm->lock`. Faults and user copies take `mm->lock` only.
+A mutex may sleep, so it is taken with irq on and no spinlock held, from task context only.
+The page fault handler turns irq on before it takes it. Signal delivery does the same on the
+way to user mode (`exit_to_user()`), because writing the frame goes through it. Code that
+cannot sleep, such as the futex fast path under a hash bucket's spinlock, must not use
+`copy_from_user()` and needs an accessor that does not take `mm->lock`.
 
 Threads share one `mm` (`task_create_thread()`, `mm_get()`), and the last `task_free()` drops
 it. Two threads faulting on the same page serialize on `mm->lock`. The second finds it mapped
-and returns.
+and returns. A fault waits behind a shootdown of the same mm: it sleeps with irq on, so the
+ipi it is waiting for is still taken.
 
 System calls touch user memory with `copy_to_user()` and `copy_from_user()`: under
 `mm->lock`, against the vma's prot, filling pages that are not there yet. No page fault is
@@ -30,14 +34,14 @@ that load flushes anyway.
 for each to flush. One shootdown runs at a time, under a mutex. The caller holds no spinlock
 and has irq on (`might_sleep()`), so two cpus shooting down at once still take each other's
 ipi. A cpu that does not answer within a second panics the initiator: something kept irq
-off that long. `mm_protect()` calls it after dropping `mm->lock`.
+off that long. `mm_protect()` and `mm_unmap()` call it with `mm->lock` held.
 
 `pmap_protect()` changes the ptes only and reports whether any changed. It never flushes.
 
 ## munmap
 
-`mm_unmap()` takes the vmas out first, under `mm->lock`. From then on a fault in the range
-fails, and `map_mutex` keeps new vmas out of it. Then, a batch of 512 pages at a time: clear
+`mm_unmap()` takes the vmas out first. From then on a fault in the range
+fails, and `mm->lock` keeps new vmas out of it. Then, a batch of 512 pages at a time: clear
 the ptes (`pmap_clear()`), shoot down, and only then free the frames. A cpu that still had an
 entry could otherwise write into a frame someone else got. Page tables are not freed: another
 cpu may be walking them until the shootdown, so they wait for `mm_put()`.

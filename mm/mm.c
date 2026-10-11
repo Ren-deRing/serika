@@ -20,8 +20,7 @@ struct mm *mm_create(void) {
     }
 
     RB_INIT(&mm->vmas);
-    spin_lock_init(&mm->lock);
-    mutex_init(&mm->map_mutex);
+    mutex_init(&mm->lock);
     mm->users = 1;
 
     mm->brk_start = mm->brk = mm->brk_end = 0;
@@ -109,14 +108,12 @@ int mm_map(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
     vma->end   = addr + size;
     vma->prot  = prot;
 
-    mutex_lock(&mm->map_mutex);
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
 
     bool overlaps = vma_overlaps(mm, vma->start, vma->end);
     if (!overlaps) RB_INSERT(vma_tree, &mm->vmas, vma);
 
-    spin_unlock_irqrestore(&mm->lock, f);
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
 
     if (overlaps) {
         kfree(vma);
@@ -130,7 +127,7 @@ int mm_map(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
 int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access) {
     int ret = 0;
 
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
 
     struct vma *vma = vma_find(mm, addr);
 
@@ -139,7 +136,7 @@ int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access) {
     else if (!vma_populate(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE)))
         ret = -ENOMEM;
 
-    spin_unlock_irqrestore(&mm->lock, f);
+    mutex_unlock(&mm->lock);
     return ret;
 }
 
@@ -147,18 +144,18 @@ int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access) {
 static int mm_access(struct mm *mm, uintptr_t addr, void *buf, size_t size, bool to_mm, uint32_t need) {
     uint8_t *kbuf = buf;
 
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
 
     while (size) {
         struct vma *vma = vma_find(mm, addr);
         if (!vma || (need & ~vma->prot)) {
-            spin_unlock_irqrestore(&mm->lock, f);
+            mutex_unlock(&mm->lock);
             return -EFAULT;
         }
 
         uintptr_t phys = vma_populate(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE));
         if (!phys) {
-            spin_unlock_irqrestore(&mm->lock, f);
+            mutex_unlock(&mm->lock);
             return -ENOMEM;
         }
 
@@ -174,7 +171,7 @@ static int mm_access(struct mm *mm, uintptr_t addr, void *buf, size_t size, bool
         size -= n;
     }
 
-    spin_unlock_irqrestore(&mm->lock, f);
+    mutex_unlock(&mm->lock);
     return 0;
 }
 
@@ -230,14 +227,12 @@ int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
         return -ENOMEM;
     }
 
-    mutex_lock(&mm->map_mutex);
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
 
     for (uintptr_t a = addr; a < end;) {
         struct vma *vma = vma_find(mm, a);
         if (!vma) {
-            spin_unlock_irqrestore(&mm->lock, f);
-            mutex_unlock(&mm->map_mutex);
+            mutex_unlock(&mm->lock);
             kfree(head);
             kfree(tail);
             return -ENOMEM;
@@ -268,13 +263,9 @@ int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
         a = vma->end;
     }
 
-    bool changed = pmap_protect(mm->pmap, addr, size, prot | PROT_USER);
+    if (pmap_protect(mm->pmap, addr, size, prot | PROT_USER)) pmap_shootdown(mm->pmap, addr, size);
 
-    spin_unlock_irqrestore(&mm->lock, f);
-
-    if (changed) pmap_shootdown(mm->pmap, addr, size);
-
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
 
     kfree(head);
     kfree(tail);
@@ -292,8 +283,7 @@ long mm_mmap(struct mm *mm, size_t size, uint32_t prot) {
     struct vma *vma = kmalloc(sizeof(struct vma));
     if (!vma) return -ENOMEM;
 
-    mutex_lock(&mm->map_mutex);
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
 
     uintptr_t addr = mm->mmap_next - size;
     bool fits = size <= mm->mmap_next && addr >= mm->brk_end && !vma_overlaps(mm, addr, mm->mmap_next);
@@ -304,8 +294,7 @@ long mm_mmap(struct mm *mm, size_t size, uint32_t prot) {
         mm->mmap_next = addr;
     }
 
-    spin_unlock_irqrestore(&mm->lock, f);
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
 
     if (!fits) {
         kfree(vma);
@@ -316,11 +305,9 @@ long mm_mmap(struct mm *mm, size_t size, uint32_t prot) {
 }
 
 void mm_set_brk(struct mm *mm, uintptr_t start) {
-    mutex_lock(&mm->map_mutex);
-    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mutex_lock(&mm->lock);
     mm->brk_start = mm->brk = mm->brk_end = ALIGN_UP(start, PAGE_SIZE);
-    spin_unlock_irqrestore(&mm->lock, f);
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
 }
 
 /* mm lock held. vmas leave [start, end). one may split in two: *spare is used then */
@@ -354,7 +341,7 @@ static void vma_cut(struct mm *mm, uintptr_t start, uintptr_t end, struct vma **
 /* frames freed per shootdown: one page of their addresses */
 #define UNMAP_BATCH (PAGE_SIZE / sizeof(uintptr_t))
 
-/* map_mutex held. frames are freed only after every cpu dropped them. page tables stay until mm_put() */
+/* mm->lock held. frames are freed only after every cpu dropped them. page tables stay until mm_put() */
 static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
     uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
     struct vma *spare = kmalloc(sizeof(struct vma));
@@ -367,11 +354,9 @@ static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
 
     uintptr_t *frames = (uintptr_t *)P2V(frames_phys);
 
-    uint64_t f = spin_lock_irqsave(&mm->lock);
     vma_cut(mm, addr, end, &spare);
-    spin_unlock_irqrestore(&mm->lock, f);
 
-    /* no vma covers it now: a fault there fails, and map_mutex keeps new ones out */
+    /* no vma covers it now: a fault there fails, and mm->lock keeps new ones out */
     for (uintptr_t va = addr; va < end; va += UNMAP_BATCH * PAGE_SIZE) {
         size_t n = end - va;
         if (n > UNMAP_BATCH * PAGE_SIZE) n = UNMAP_BATCH * PAGE_SIZE;
@@ -398,42 +383,35 @@ int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
     uintptr_t end = addr + size;
     if (end < addr || end > USER_SPACE_END) return -EINVAL;
 
-    mutex_lock(&mm->map_mutex);
+    mutex_lock(&mm->lock);
     int err = unmap_range(mm, addr, end);
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
 
     return err;
 }
 
-/* map_mutex held. the heap's last vma grows, unless munmap() took that end */
+/* mm->lock held. the heap's last vma grows, unless munmap() took that end */
 static bool brk_grow(struct mm *mm, uintptr_t new_end) {
-    bool ok = false;
-
-    uint64_t f = spin_lock_irqsave(&mm->lock);
-
-    if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) goto out;
+    if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) return false;
 
     struct vma *heap = mm->brk_end > mm->brk_start ? vma_find(mm, mm->brk_end - 1) : NULL;
 
     if (heap) {
         heap->end = new_end;
-    } else {
-        heap = kmalloc(sizeof(struct vma));
-        if (!heap) goto out;
-
-        *heap = (struct vma){ .start = mm->brk_end, .end = new_end, .prot = PROT_READ | PROT_WRITE };
-        RB_INSERT(vma_tree, &mm->vmas, heap);
+        return true;
     }
 
-    ok = true;
+    heap = kmalloc(sizeof(struct vma));
+    if (!heap) return false;
 
-out:
-    spin_unlock_irqrestore(&mm->lock, f);
-    return ok;
+    *heap = (struct vma){ .start = mm->brk_end, .end = new_end, .prot = PROT_READ | PROT_WRITE };
+    RB_INSERT(vma_tree, &mm->vmas, heap);
+
+    return true;
 }
 
 uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
-    mutex_lock(&mm->map_mutex);
+    mutex_lock(&mm->lock);
 
     uintptr_t new_end = ALIGN_UP(brk, PAGE_SIZE);
 
@@ -451,6 +429,6 @@ uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
 
 out:
     brk = mm->brk;
-    mutex_unlock(&mm->map_mutex);
+    mutex_unlock(&mm->lock);
     return brk;
 }
