@@ -4,6 +4,9 @@
 #include <asm/task.h>
 #include <asm/trapframe.h>
 
+#include <serika/list.h>
+#include <serika/wait.h>
+
 #include <deps/tree.h>
 #include <stdint.h>
 
@@ -42,7 +45,10 @@ struct task {
     struct pmap      *pmap;          /* mm->pmap, or the kernel's */
     struct mm        *mm;            /* NULL for kthreads */
 
-    struct task      *parent;
+    struct task      *parent;        /* NULL: frees itself on exit. tasklist_lock */
+    list_node         children;      /* tasklist_lock */
+    list_node         sibling;       /* in parent->children */
+    struct wait_queue wait_chldexit; /* children exiting */
 
     enum task_state state;
 
@@ -70,5 +76,6 @@ struct task *task_create(task_entry_t entry, int nice);
 struct task *task_create_user(const void *code, size_t size, int nice);
 struct task *task_create_boot(void);
 void task_free(struct task *task);
+void task_dead(struct task *task);
 void task_exit(long code);
-long task_wait(struct task *child, long *status);
+long task_wait(struct task *child, long *status, int options);

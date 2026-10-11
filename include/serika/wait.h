@@ -2,10 +2,10 @@
 
 #include <serika/list.h>
 #include <serika/lock.h>
-#include <serika/preempt.h>
-#include <serika/sched.h>
 
 /* lock order: wait_queue->lock, then rq->lock. */
+
+struct task;
 
 struct wait_queue {
     spinlock_t lock;

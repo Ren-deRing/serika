@@ -30,6 +30,8 @@ static struct test tests[] = {
     { "user fault",  test_user_fault },
     { "wait sleep",  test_wait_sleep },
     { "wait pingpong", test_wait_pingpong },
+    { "wait child",  test_wait_child },
+    { "wait orphan", test_wait_orphan },
 };
 
 void test_run_all() {

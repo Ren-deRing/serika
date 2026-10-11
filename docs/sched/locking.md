@@ -23,9 +23,8 @@ task leaves.
 
 `schedule()` holds the lock across `switch_to()`. The task that resumes releases it.
 
-Whoever resumes calls `finish_task_switch()`, which releases the lock and then handles the
-task that died in the switch (`rq->dead`): freed, or `TASK_ZOMBIE` if a parent will reap
-it with `task_wait()`. New kernel threads call it from `task_start()` before enabling
+Whoever resumes calls `finish_task_switch()`, which releases the lock and then hands the
+task that died in the switch (`rq->dead`) to `task_dead()`. New kernel threads call it from `task_start()` before enabling
 interrupts. New user tasks call it from `task_start_user()`, and `iretq` then restores
 interrupts from the trapframe.
 
@@ -83,6 +82,20 @@ the rq lock of whoever switched to it, dropped in `finish_task_switch()`.
 System calls run with irq on after `syscall_entry`, like any task, and turn it off again
 before `sysret`.
 
+## Parents and children
+
+`tasklist_lock` protects `parent`, `children` and `sibling`, and the change to `TASK_ZOMBIE`.
+
+- `task_dead()` runs after the rq lock is dropped. With a parent, it makes the task a zombie
+  and wakes `parent->wait_chldexit`, both under `tasklist_lock`. Without one, it frees the task.
+- `task_exit()` calls `exit_notify()` first: every child loses its parent. Zombies among them
+  are freed there, after the lock. The others free themselves in `task_dead()`.
+- `task_wait()` sleeps on its own `wait_chldexit` and looks for a zombie under
+  `tasklist_lock`. The zombie leaves the list under the lock, and is freed after it.
+
+A parent cannot be freed while a child reads `child->parent`: the parent clears it in
+`exit_notify()` under the same lock, before it dies.
+
 ## Lock-free reads
 
 `select_cpu()` and `balance()` read other runqueues' `nr_running` without a lock. These
@@ -91,7 +104,7 @@ before moving a task.
 
 ## Lock order
 
-`wait_queue` lock, then rq lock, then the buddy and slab locks. Never the other way: no code
+`tasklist_lock`, then `wait_queue` lock, then rq lock, then the buddy and slab locks. Never the other way: no code
 takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
 lock before it does anything else. `task_free()` calls both allocators, but only after that.
 

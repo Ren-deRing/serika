@@ -240,10 +240,7 @@ void finish_task_switch(void) {
     rq->dead = NULL;
     spin_unlock(&rq->lock);
 
-    if (!dead) return;
-
-    if (dead->parent) __atomic_store_n(&dead->state, TASK_ZOMBIE, 3); /* __ATOMIC_RELEASE. parent reaps */
-    else              task_free(dead);
+    if (dead) task_dead(dead);
 }
 
 /* t->cpu changes only under the lock of the rq it leaves, so once held it stays */

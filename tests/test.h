@@ -1,6 +1,9 @@
 #pragma once
 
+#include <serika/arch.h>
+#include <serika/cpu.h>
 #include <serika/printk.h>
+#include <asm/arch.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -23,6 +26,15 @@ static inline uint32_t rand_u32(void) {
 
     rand_state = x;
     return x;
+}
+
+/* poll, not sleep: a broken wait must not hang the test runner */
+static inline bool wait_for(volatile bool *flag, uint64_t ms) {
+    uint64_t until = rdtsc() + curcpu->tsc_freq_hz / 1000 * ms;
+
+    while (!*flag && rdtsc() < until) arch_pause();
+
+    return *flag;
 }
 
 void test_run_all();
@@ -51,3 +63,5 @@ bool test_user_fault();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();
+bool test_wait_child();
+bool test_wait_orphan();

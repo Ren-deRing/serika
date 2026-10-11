@@ -1,20 +1,12 @@
 #include <serika/arch.h>
 #include <serika/cpu.h>
+#include <serika/preempt.h>
 #include <serika/sched.h>
 #include <serika/wait.h>
 
 #include <asm/arch.h>
 
 #include <tests/test.h>
-
-/* poll, not sleep: a broken wait must not hang the test runner */
-static bool wait_for(volatile bool *flag, uint64_t ms) {
-    uint64_t until = rdtsc() + curcpu->tsc_freq_hz / 1000 * ms;
-
-    while (!*flag && rdtsc() < until) arch_pause();
-
-    return *flag;
-}
 
 static struct wait_queue sleep_wq;
 static volatile bool     sleep_go;
