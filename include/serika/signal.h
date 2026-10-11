@@ -83,6 +83,8 @@ struct sighand {
 struct task;
 
 struct sighand *sighand_create(void);
+struct sighand *sighand_copy(struct sighand *old);
+void signal_exec_reset(void);
 void sighand_get(struct sighand *sh);
 void sighand_put(struct sighand *sh);
 

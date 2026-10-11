@@ -62,7 +62,12 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_IOCTL:           return sys_ioctl(args[0], args[1], args[2]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
         case SYS_GETPID:          return sys_getpid();
+        case SYS_CLONE:           return sys_clone(args[0], args[1], args[2], args[3], args[4]);
+        case SYS_FORK:            return sys_fork();
+        case SYS_VFORK:           return sys_vfork();
+        case SYS_EXECVE:          return sys_execve(args[0], args[1], args[2]);
         case SYS_EXIT:            return sys_exit(args[0]);
+        case SYS_WAIT4:           return sys_wait4(args[0], args[1], args[2], args[3]);
         case SYS_KILL:            return sys_kill(args[0], args[1]);
         case SYS_RT_SIGPENDING:   return sys_rt_sigpending(args[0], args[1]);
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);

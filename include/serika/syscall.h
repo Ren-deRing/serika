@@ -15,7 +15,12 @@
 #define SYS_IOCTL            16
 #define SYS_NANOSLEEP        35
 #define SYS_GETPID           39
+#define SYS_CLONE            56
+#define SYS_FORK             57
+#define SYS_VFORK            58
+#define SYS_EXECVE           59
 #define SYS_EXIT             60
+#define SYS_WAIT4            61
 #define SYS_KILL             62
 #define SYS_RT_SIGPENDING   127
 #define SYS_ARCH_PRCTL      158
@@ -60,3 +65,12 @@ long sys_tkill(long tid, long sig);
 long sys_tgkill(long tgid, long tid, long sig);
 long sys_getpid(void);
 long sys_gettid(void);
+
+/* kernel/fork.c */
+long sys_clone(long flags, long newsp, long ptid, long ctid, long tls);
+long sys_fork(void);
+long sys_vfork(void);
+long sys_wait4(long pid, long ustatus, long options, long urusage);
+
+/* fs/exec.c */
+long sys_execve(long upath, long uargv, long uenvp);

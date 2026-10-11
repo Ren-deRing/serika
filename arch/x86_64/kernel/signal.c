@@ -12,6 +12,7 @@
 #include <serika/task.h>
 
 #include <asm/cpu.h>
+#include <asm/task.h>
 #include <asm/trapframe.h>
 
 #include <stddef.h>
@@ -184,14 +185,9 @@ bool signal_restore(struct trapframe *tf) {
     uint8_t *x = (uint8_t *)P2V(buf);
     memset(x, 0, ORDER_TO_SIZE(order));
 
-    /* no fpstate */
-    if (sc->fpstate) {
-        if (copy_from_user(x, sc->fpstate, xsize) != 0 || !xstate_valid(x, mask)) {
-            free_pages((void *)buf, order);
-            return false;
-        }
-    } else {
-        *(uint32_t *)(x + 24) = 0x1f80;
+    if (sc->fpstate && (copy_from_user(x, sc->fpstate, xsize) != 0 || !xstate_valid(x, mask))) {
+        free_pages((void *)buf, order);
+        return false;
     }
 
     tf->r8  = sc->r8;  tf->r9  = sc->r9;  tf->r10 = sc->r10; tf->r11 = sc->r11;
@@ -205,7 +201,9 @@ bool signal_restore(struct trapframe *tf) {
 
     signal_set_blocked(f.uc.uc_sigmask);
 
-    asm volatile ("xrstor (%0)" :: "r"(x), "a"((uint32_t)mask), "d"((uint32_t)(mask >> 32)) : "memory");
+    /* no fpstate: the fpu starts over, as linux does */
+    if (sc->fpstate) asm volatile ("xrstor (%0)" :: "r"(x), "a"((uint32_t)mask), "d"((uint32_t)(mask >> 32)) : "memory");
+    else             arch_fpu_reset();
 
     free_pages((void *)buf, order);
     return true;

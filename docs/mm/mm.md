@@ -22,6 +22,26 @@ System calls touch user memory with `copy_to_user()` and `copy_from_user()`: und
 `mm->lock`, against the vma's prot, filling pages that are not there yet. No page fault is
 taken in the kernel.
 
+## Copy-on-write
+
+Each frame a user pmap maps has a count in its `struct page` (`refs`): 1 when a fault brings
+it in, one more for each mm `fork()` shares it with. `munmap()`, a shrinking `brk()` and
+`mm_put()` drop a reference, and the last one frees the frame.
+
+`mm_fork()` gives the child the same vmas and maps every present page into it read-only.
+The parent's writable pages turn read-only too, and the parent's pmap is shot down: another
+thread of the parent may still hold a writable entry.
+
+A write to a present read-only page in a writable vma breaks the sharing (`cow_break()`),
+both from a fault and from `copy_to_user()`, which writes through the direct map:
+
+- `refs` is 1: nobody else maps it any more. The pte gets its rights back.
+- Else: a copy of the frame replaces it in this pmap, the old entry is shot down for this mm's
+  other threads, and the shared frame loses a reference.
+
+A shootdown with no other cpu in the mask flushes this cpu only, without an ipi. A
+single-threaded process breaking its own copy-on-write goes that way.
+
 ## TLB shootdown
 
 `mprotect()` can take rights away, so other cpus must drop what they cached. Each pmap has a

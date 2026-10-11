@@ -14,7 +14,7 @@ EXEC := $(BINS:%=$(INITRD_DIR)/bin/%) $(BINS:%=$(INITRD_DIR)/bin/%-pie)
 
 # static glibc from the host (glibc-static)
 GLIBC_CC   := clang
-GLIBC_BINS := hello files signals
+GLIBC_BINS := hello files signals fork
 EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%)
 
 LIB_OBJS     := $(LIB:%=$(UOBJ_DIR)/%.o)

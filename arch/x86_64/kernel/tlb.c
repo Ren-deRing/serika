@@ -5,6 +5,7 @@
 #include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/pmap.h>
+#include <serika/preempt.h>
 #include <serika/compiler.h>
 
 #include <asm/arch.h>
@@ -19,17 +20,21 @@ static volatile uintptr_t tlb_virt;
 static volatile size_t    tlb_size;
 static uint64_t           tlb_pending[MAX_CPUS / 64]; /* cpus yet to flush. atomic */
 
+notrace static void flush_range(uintptr_t virt, size_t size) {
+    if (size > TLB_RANGE_PAGES * PAGE_SIZE) {
+        flush_tlb_all();
+    } else {
+        for (uintptr_t va = virt; va < virt + size; va += PAGE_SIZE) flush_tlb(va);
+    }
+}
+
 notrace static void tlb_handler(struct trapframe *tf, void *data) {
     (void)tf;
     (void)data;
 
     uint32_t id = this_cpu_read(id);
 
-    if (tlb_size > TLB_RANGE_PAGES * PAGE_SIZE) {
-        flush_tlb_all();
-    } else {
-        for (uintptr_t va = tlb_virt; va < tlb_virt + tlb_size; va += PAGE_SIZE) flush_tlb(va);
-    }
+    flush_range(tlb_virt, tlb_size);
 
     /* after this the initiator may reuse tlb_virt and tlb_size */
     __atomic_and_fetch(&tlb_pending[id / 64], ~(1ULL << (id % 64)), 5); /* __ATOMIC_SEQ_CST */
@@ -54,8 +59,33 @@ void pmap_switch(struct pmap *prev, struct pmap *next) {
     __atomic_or_fetch(&next->cpus[id / 64], bit, 5);
 }
 
+/* no other cpu has pmap: flush here, no ipi. a single-threaded process's own changes go this way */
+static bool shootdown_local(struct pmap *pmap, uintptr_t virt, size_t size) {
+    if (pmap == pmap_kernel()) return false;
+
+    /* the ptes are written. a cpu missing from the mask loads cr3 after this */
+    __atomic_thread_fence(5); /* __ATOMIC_SEQ_CST */
+
+    preempt_count_add(1); /* "this cpu" must stay this cpu */
+
+    uint32_t me = this_cpu_read(id);
+    bool alone = true;
+
+    for (int w = 0; w < MAX_CPUS / 64; w++) {
+        uint64_t mine = w == (int)(me / 64) ? 1ULL << (me % 64) : 0;
+        if (__atomic_load_n(&pmap->cpus[w], 5) & ~mine) alone = false; /* __ATOMIC_SEQ_CST */
+    }
+
+    if (alone) flush_range(virt, size);
+
+    preempt_count_sub(1);
+    return alone;
+}
+
 /* no spinlock */
 void pmap_shootdown(struct pmap *pmap, uintptr_t virt, size_t size) {
+    if (shootdown_local(pmap, virt, size)) return;
+
     mutex_lock(&tlb_mutex);
 
     tlb_virt = virt;

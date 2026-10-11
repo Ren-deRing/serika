@@ -45,6 +45,7 @@ static struct test tests[] = {
     { "exec glibc",  test_exec_glibc },
     { "exec files",  test_exec_files },
     { "signal glibc", test_signal_glibc },
+    { "fork glibc",  test_fork_glibc },
 };
 
 void test_run_all() {

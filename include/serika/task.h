@@ -91,4 +91,7 @@ void task_free(struct task *task);
 void task_dead(struct task *task);
 void task_exit(long code);
 long task_wait(struct task *child, long *status, int options);
+long task_waitpid(long pid, long *status, int options);
+int task_fork(const struct trapframe *tf, struct task **out);
+void task_exec_mm(struct mm *mm);
 int task_signal(long pid, int sig, const struct ksiginfo *info); /* sig 0: is it there */

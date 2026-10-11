@@ -71,6 +71,7 @@ bool test_smp_balance();
 bool test_user_task();
 bool test_user_stack();
 bool test_thread_mm();
+bool test_fork_glibc();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();

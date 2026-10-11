@@ -36,6 +36,7 @@ struct page {
     list_node   page_list;
     bool        is_free;
     uint8_t     order;
+    uint32_t    refs;
 
     struct slab slab;
 };

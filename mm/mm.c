@@ -9,6 +9,25 @@
 
 RB_GENERATE(vma_tree, vma, node, vma_cmp);
 
+static struct page *frame(uintptr_t phys) {
+    return pfn_to_page(PHYS_TO_PFN(phys));
+}
+
+/* one more user pmap maps it */
+static void frame_get(uintptr_t phys) {
+    __atomic_add_fetch(&frame(phys)->refs, 1, 0); /* __ATOMIC_RELAXED */
+}
+
+/* the last mapping frees it */
+static void frame_put(uintptr_t phys) {
+    if (__atomic_sub_fetch(&frame(phys)->refs, 1, 4) == 0) free_pages((void *)phys, 0); /* __ATOMIC_ACQ_REL */
+}
+
+/* a pte for a vma's prot. PROT_NONE stays the kernel's */
+static uint32_t user_rights(uint32_t prot) {
+    return prot ? prot | PROT_USER : 0;
+}
+
 struct mm *mm_create(void) {
     struct mm *mm = kmalloc(sizeof(struct mm));
     if (!mm) return NULL;
@@ -40,8 +59,10 @@ void mm_put(struct mm *mm) {
     struct vma *vma, *tmp;
 
     RB_FOREACH_SAFE(vma, vma_tree, &mm->vmas, tmp) {
-        for (uintptr_t va = vma->start; va < vma->end; va += PAGE_SIZE)
-            free_pages((void *)pmap_extract(mm->pmap, va), 0);
+        for (uintptr_t va = vma->start; va < vma->end; va += PAGE_SIZE) {
+            uintptr_t phys = pmap_extract(mm->pmap, va);
+            if (phys) frame_put(phys);
+        }
 
         RB_REMOVE(vma_tree, &mm->vmas, vma);
         kfree(vma);
@@ -77,17 +98,46 @@ static bool vma_overlaps(struct mm *mm, uintptr_t start, uintptr_t end) {
     return false;
 }
 
-/* mm lock held. returns the frame, a zeroed one if it was not there */
-static uintptr_t vma_populate(struct mm *mm, struct vma *vma, uintptr_t page) {
-    uintptr_t phys = pmap_extract(mm->pmap, page);
-    if (phys) return phys; /* another thread faulted it in first */
+/* mm lock held. a write to a page fork left shared: our own copy, or the frame itself once no one else maps it */
+static uintptr_t cow_break(struct mm *mm, struct vma *vma, uintptr_t page, uintptr_t phys) {
+    if (__atomic_load_n(&frame(phys)->refs, 2) == 1) { /* __ATOMIC_ACQUIRE */
+        pmap_protect(mm->pmap, page, PAGE_SIZE, user_rights(vma->prot)); /* more rights: a stale entry only faults again */
+        return phys;
+    }
+
+    uintptr_t copy = (uintptr_t)alloc_pages(0);
+    if (!copy) return 0;
+
+    memcpy((void *)P2V(copy), (void *)P2V(phys), PAGE_SIZE);
+    frame(copy)->refs = 1;
+
+    pmap_replace(mm->pmap, page, copy, user_rights(vma->prot));
+
+    /* another of our threads may still read the shared frame through its tlb */
+    pmap_shootdown(mm->pmap, page, PAGE_SIZE);
+    frame_put(phys);
+
+    return copy;
+}
+
+/* mm lock held. the frame at page, faulted in, and ours alone if we are about to write */
+static uintptr_t vma_page(struct mm *mm, struct vma *vma, uintptr_t page, bool write) {
+    bool writable = false;
+    uintptr_t phys = pmap_lookup(mm->pmap, page, &writable);
+
+    if (phys) {
+        if (write && !writable && (vma->prot & PROT_WRITE)) return cow_break(mm, vma, page, phys);
+        return phys; /* another thread faulted it in first */
+    }
 
     phys = (uintptr_t)alloc_pages(0);
     if (!phys) return 0;
 
     memset((void *)P2V(phys), 0, PAGE_SIZE);
+    frame(phys)->refs = 1;
 
-    if (pmap_map(mm->pmap, page, phys, PAGE_SIZE, vma->prot | PROT_USER) != 0) {
+    if (pmap_map(mm->pmap, page, phys, PAGE_SIZE, user_rights(vma->prot)) != 0) {
+        frame(phys)->refs = 0;
         free_pages((void *)phys, 0);
         return 0;
     }
@@ -133,7 +183,7 @@ int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access) {
 
     if (!vma || (access & ~vma->prot))
         ret = -EFAULT;
-    else if (!vma_populate(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE)))
+    else if (!vma_page(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE), access & PROT_WRITE))
         ret = -ENOMEM;
 
     mutex_unlock(&mm->lock);
@@ -153,7 +203,8 @@ static int mm_access(struct mm *mm, uintptr_t addr, void *buf, size_t size, bool
             return -EFAULT;
         }
 
-        uintptr_t phys = vma_populate(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE));
+        /* the loader (need 0) writes into fresh pages: only a checked write breaks sharing */
+        uintptr_t phys = vma_page(mm, vma, ALIGN_DOWN(addr, PAGE_SIZE), to_mm && (need & PROT_WRITE));
         if (!phys) {
             mutex_unlock(&mm->lock);
             return -ENOMEM;
@@ -177,6 +228,11 @@ static int mm_access(struct mm *mm, uintptr_t addr, void *buf, size_t size, bool
 
 int mm_copy_to(struct mm *mm, uintptr_t addr, const void *src, size_t size) {
     return mm_access(mm, addr, (void *)src, size, true, 0);
+}
+
+/* another task's memory, as that task could write it: clone's CLONE_CHILD_SETTID */
+int mm_write(struct mm *mm, uintptr_t addr, const void *src, size_t size) {
+    return mm_access(mm, addr, (void *)src, size, true, PROT_WRITE);
 }
 
 int copy_to_user(uintptr_t to, const void *from, size_t size) {
@@ -366,7 +422,7 @@ static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
 
         pmap_shootdown(mm->pmap, va, n);
 
-        for (size_t i = 0; i < count; i++) free_pages((void *)frames[i], 0);
+        for (size_t i = 0; i < count; i++) frame_put(frames[i]);
     }
 
     free_pages((void *)frames_phys, 0);
@@ -431,4 +487,65 @@ out:
     brk = mm->brk;
     mutex_unlock(&mm->lock);
     return brk;
+}
+
+/* fork: the same vmas, and every present page shared read-only until one side writes */
+struct mm *mm_fork(struct mm *old) {
+    struct mm *mm = mm_create();
+    if (!mm) return NULL;
+
+    bool shared = false, ok = true;
+
+    mutex_lock(&old->lock);
+
+    mm->brk_start = old->brk_start;
+    mm->brk       = old->brk;
+    mm->brk_end   = old->brk_end;
+    mm->mmap_next = old->mmap_next;
+
+    struct vma *vma;
+
+    RB_FOREACH(vma, vma_tree, &old->vmas) {
+        struct vma *copy = kmalloc(sizeof(struct vma));
+        if (!copy) {
+            ok = false;
+            break;
+        }
+
+        *copy = (struct vma){ .start = vma->start, .end = vma->end, .prot = vma->prot };
+        RB_INSERT(vma_tree, &mm->vmas, copy);
+
+        /* both sides read-only: the first write to it copies */
+        uint32_t rights = user_rights(vma->prot & ~PROT_WRITE);
+
+        if ((vma->prot & PROT_WRITE) && pmap_protect(old->pmap, vma->start, vma->end - vma->start, rights))
+            shared = true;
+
+        for (uintptr_t va = vma->start; va < vma->end; va += PAGE_SIZE) {
+            uintptr_t phys = pmap_extract(old->pmap, va);
+            if (!phys) continue;
+
+            if (pmap_map(mm->pmap, va, phys, PAGE_SIZE, rights) != 0) {
+                ok = false;
+                break;
+            }
+
+            frame_get(phys);
+        }
+
+        if (!ok) break;
+    }
+
+    /* our other threads may still hold writable entries */
+    if (shared) pmap_shootdown(old->pmap, 0, USER_SPACE_END);
+
+    mutex_unlock(&old->lock);
+
+    /* what was shared stays read-only in old: alone again, it gets its rights back on a write */
+    if (!ok) {
+        mm_put(mm);
+        return NULL;
+    }
+
+    return mm;
 }

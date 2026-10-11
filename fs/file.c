@@ -58,7 +58,7 @@ void files_put(struct files *files) {
 }
 
 /* the lowest free fd takes our reference */
-static int fd_install(struct files *files, struct file *f) {
+static int fd_install(struct files *files, struct file *f, bool cloexec) {
     int fd = -EMFILE;
 
     uint64_t flags = spin_lock_irqsave(&files->lock);
@@ -67,6 +67,9 @@ static int fd_install(struct files *files, struct file *f) {
         if (!files->fd[i]) {
             files->fd[i] = f;
             fd = i;
+
+            if (cloexec) files->cloexec[i / 64] |= 1ULL << (i % 64);
+            else         files->cloexec[i / 64] &= ~(1ULL << (i % 64));
             break;
         }
     }
@@ -92,7 +95,7 @@ static struct file *fd_get(long fd) {
 }
 
 /* cwd is "/" until there is one: a relative path is from the root */
-static int path_from_user(long dirfd, uintptr_t upath, char **out) {
+int path_from_user(long dirfd, uintptr_t upath, char **out) {
     char *buf = kmalloc(PATH_MAX);
     if (!buf) return -ENOMEM;
 
@@ -128,7 +131,7 @@ long sys_openat(long dirfd, long upath, long flags, long mode) {
     kfree(path);
     if (err) return err;
 
-    int fd = fd_install(current_task()->files, f);
+    int fd = fd_install(current_task()->files, f, flags & O_CLOEXEC);
     if (fd < 0) vfs_close(f);
 
     return fd;
@@ -360,4 +363,45 @@ long sys_ioctl(long fd, long cmd, long arg) {
     }
 
     return -ENOTTY;
+}
+
+/* fork: the same open files, one more reference each */
+struct files *files_copy(struct files *old) {
+    struct files *files = kmalloc(sizeof(struct files));
+    if (!files) return NULL;
+
+    memset(files, 0, sizeof(*files));
+    spin_lock_init(&files->lock);
+    files->users = 1;
+
+    uint64_t flags = spin_lock_irqsave(&old->lock);
+
+    for (int i = 0; i < FILES_MAX; i++) {
+        files->fd[i] = old->fd[i];
+        if (files->fd[i]) fget(files->fd[i]);
+    }
+
+    memcpy(files->cloexec, old->cloexec, sizeof(files->cloexec));
+
+    spin_unlock_irqrestore(&old->lock, flags);
+    return files;
+}
+
+/* execve: the fds marked close-on-exec go. one at a time: the close comes after the lock */
+void files_close_on_exec(struct files *files) {
+    for (int i = 0; i < FILES_MAX; i++) {
+        uint64_t flags = spin_lock_irqsave(&files->lock);
+
+        struct file *f = NULL;
+
+        if (files->cloexec[i / 64] & (1ULL << (i % 64))) {
+            f = files->fd[i];
+            files->fd[i] = NULL;
+            files->cloexec[i / 64] &= ~(1ULL << (i % 64));
+        }
+
+        spin_unlock_irqrestore(&files->lock, flags);
+
+        if (f) vfs_close(f);
+    }
 }

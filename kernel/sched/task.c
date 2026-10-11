@@ -9,11 +9,11 @@
 #include <serika/pmap.h>
 #include <serika/preempt.h>
 #include <serika/sched.h>
+#include <serika/signal.h>
 #include <serika/slab.h>
 #include <serika/string.h>
 #include <serika/syscall.h>
 #include <serika/vfs.h>
-#include <serika/signal.h>
 #include <serika/wait.h>
 
 static volatile uint64_t next_id = 0;
@@ -79,9 +79,8 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* not runnable until sched_add_task(). takes mm, files and sighand on success, the caller still owns them on failure */
-struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *sighand,
-                            uintptr_t entry, uintptr_t user_stack, int nice) {
+/* a user task with its kernel stack. arch fills its first frame */
+static struct task *user_task_alloc(uintptr_t entry, int nice) {
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
     struct task *task = task_alloc((task_entry_t)entry, nice);
@@ -96,18 +95,23 @@ struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
 
-    if (arch_task_init(task, user_stack) == -1) {
-        free_pages((void *)kstack_phys, korder);
-        kfree(task);
-        return NULL;
-    }
+    return task;
+}
 
+/* one that never ran and owns nothing yet */
+static void user_task_discard(struct task *task) {
+    free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
+    kfree(task->arch.xsaves_area);
+    kfree(task);
+}
+
+/* takes mm, files and sighand. the creator reaps it, kill() finds it */
+static void user_task_attach(struct task *task, struct mm *mm, struct files *files, struct sighand *sighand) {
     task->mm = mm;
     task->pmap = mm->pmap;
     task->files = files;
     task->sighand = sighand;
 
-    /* creator reaps */
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
     task->parent = current_task();
     list_add_tail(&task->sibling, &task->parent->children);
@@ -115,8 +119,65 @@ struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *
     task->pid_next = pid_hash[task->id % PID_HASH];
     pid_hash[task->id % PID_HASH] = task;
     spin_unlock_irqrestore(&tasklist_lock, f);
+}
 
+/* not runnable until sched_add_task(). takes mm, files and sighand on success, the caller still owns them on failure */
+struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *sighand,
+                            uintptr_t entry, uintptr_t user_stack, int nice) {
+    struct task *task = user_task_alloc(entry, nice);
+    if (!task) return NULL;
+
+    if (arch_task_init(task, user_stack) == -1) {
+        user_task_discard(task);
+        return NULL;
+    }
+
+    user_task_attach(task, mm, files, sighand);
     return task;
+}
+
+/* clone without CLONE_VM: a copy of the caller that returns 0 from the same system call. not runnable yet */
+int task_fork(const struct trapframe *tf, struct task **out) {
+    struct task *curr = current_task();
+
+    struct task *task = user_task_alloc(0, curr->nice);
+    if (!task) return -ENOMEM;
+
+    struct mm *mm = mm_fork(curr->mm);
+    struct files *files = files_copy(curr->files);
+    struct sighand *sighand = sighand_copy(curr->sighand);
+
+    if (!mm || !files || !sighand || arch_fork_init(task, tf) == -1) {
+        if (mm) mm_put(mm);
+        if (files) files_put(files);
+        if (sighand) sighand_put(sighand);
+        user_task_discard(task);
+        return -ENOMEM;
+    }
+
+    task->blocked = curr->blocked;
+
+    user_task_attach(task, mm, files, sighand);
+
+    *out = task;
+    return 0;
+}
+
+/* execve: the task runs on mm from here. the old one goes once this cpu has left it */
+void task_exec_mm(struct mm *mm) {
+    struct task *curr = current_task();
+    struct mm *old = curr->mm;
+
+    interrupt_status_t flags = arch_irq_save();
+
+    pmap_switch(curr->pmap, mm->pmap);
+    curr->mm = mm;
+    curr->pmap = mm->pmap;
+    pmap_activate(mm->pmap);
+
+    arch_irq_restore(flags);
+
+    mm_put(old);
 }
 
 /* not runnable until sched_add_task() */
@@ -254,7 +315,7 @@ static void exit_notify(struct task *curr) {
 }
 
 /* 0: not exited yet, -ECHILD: no such child */
-static long reap_child(struct task *curr, struct task *child, long *status) {
+static long reap_child(struct task *curr, long pid, long *status) {
     struct task *zombie = NULL;
     bool found = false;
 
@@ -262,7 +323,7 @@ static long reap_child(struct task *curr, struct task *child, long *status) {
 
     for (list_node *n = curr->children.next; n != &curr->children; n = n->next) {
         struct task *c = container_of(n, struct task, sibling);
-        if (child && c != child) continue;
+        if (pid != -1 && (long)c->id != pid) continue;
 
         found = true;
 
@@ -284,16 +345,21 @@ static long reap_child(struct task *curr, struct task *child, long *status) {
     return id;
 }
 
-/* child NULL: any child */
-long task_wait(struct task *child, long *status, int options) {
+/* pid -1: any child */
+long task_waitpid(long pid, long *status, int options) {
     struct task *curr = current_task();
     long ret;
 
-    if (options & WNOHANG) return reap_child(curr, child, status);
+    if (options & WNOHANG) return reap_child(curr, pid, status);
 
     /* a signal ends the wait: -ERESTARTSYS, which the way back to user turns into a restart or -EINTR */
-    int err = wait_event_interruptible(curr->wait_chldexit, (ret = reap_child(curr, child, status)) != 0);
+    int err = wait_event_interruptible(curr->wait_chldexit, (ret = reap_child(curr, pid, status)) != 0);
     return err ? err : ret;
+}
+
+/* child NULL: any child */
+long task_wait(struct task *child, long *status, int options) {
+    return task_waitpid(child ? (long)child->id : -1, status, options);
 }
 
 int task_signal(long pid, int sig, const struct ksiginfo *info) {

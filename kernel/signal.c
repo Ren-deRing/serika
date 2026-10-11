@@ -20,6 +20,30 @@ struct sighand *sighand_create(void) {
     return sh;
 }
 
+/* fork: the same handlers */
+struct sighand *sighand_copy(struct sighand *old) {
+    struct sighand *sh = sighand_create();
+    if (!sh) return NULL;
+
+    uint64_t flags = spin_lock_irqsave(&old->lock);
+    memcpy(sh->action, old->action, sizeof(sh->action));
+    spin_unlock_irqrestore(&old->lock, flags);
+
+    return sh;
+}
+
+/* execve: the new program has none of the old one's functions. what was ignored stays ignored */
+void signal_exec_reset(void) {
+    struct sighand *sh = current_task()->sighand;
+
+    uint64_t flags = spin_lock_irqsave(&sh->lock);
+
+    for (int i = 0; i < NSIG; i++)
+        if (sh->action[i].handler != SIG_IGN) sh->action[i] = (struct k_sigaction){ .handler = SIG_DFL };
+
+    spin_unlock_irqrestore(&sh->lock, flags);
+}
+
 void sighand_get(struct sighand *sh) {
     __atomic_add_fetch(&sh->users, 1, 0); /* __ATOMIC_RELAXED */
 }

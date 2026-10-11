@@ -359,7 +359,52 @@ uintptr_t pmap_extract(struct pmap *pmap, uintptr_t va) {
     return pa;
 }
 
-/* present 4KiB pages only. PROT_USER off, or no access bit, makes a page the kernel's. true if one changed */
+/* a user pte's rights. PROT_USER off, or no access bit, makes it the kernel's */
+static pte_t pte_rights(uint32_t flags) {
+    pte_t pte = 0;
+
+    if (flags & PROT_WRITE) pte |= PTE_WRITABLE;
+    if ((flags & PROT_USER) && (flags & (PROT_READ | PROT_WRITE | PROT_EXEC))) pte |= PTE_USER;
+    if (!(flags & PROT_EXEC)) pte |= PTE_NX;
+
+    return pte;
+}
+
+/* the frame of a present 4KiB page, 0 if none. *writable as its pte says */
+uintptr_t pmap_lookup(struct pmap *pmap, uintptr_t va, bool *writable) {
+    uint64_t f = spin_lock_irqsave(&pmap->lock);
+
+    bool huge;
+    pte_t *e = pmap_leaf(pmap, va, &huge);
+    uintptr_t pa = 0;
+
+    if (e && !huge && (*e & PTE_PRESENT)) {
+        pa = *e & PTE_ADDR_MASK;
+        *writable = *e & PTE_WRITABLE;
+    }
+
+    spin_unlock_irqrestore(&pmap->lock, f);
+    return pa;
+}
+
+/* a present 4KiB page gets another frame. the old one, 0 if none was there. no flush */
+uintptr_t pmap_replace(struct pmap *pmap, uintptr_t va, uintptr_t pa, uint32_t flags) {
+    uint64_t f = spin_lock_irqsave(&pmap->lock);
+
+    bool huge;
+    pte_t *e = pmap_leaf(pmap, va, &huge);
+    uintptr_t old = 0;
+
+    if (e && !huge && (*e & PTE_PRESENT)) {
+        old = *e & PTE_ADDR_MASK;
+        *e = (pa & PTE_ADDR_MASK) | PTE_PRESENT | pte_rights(flags);
+    }
+
+    spin_unlock_irqrestore(&pmap->lock, f);
+    return old;
+}
+
+/* present 4KiB pages only. true if one changed */
 bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags) {
     if (!pmap || size == 0) return false;
     if ((virt & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1))) return false;
@@ -374,11 +419,7 @@ bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags
         pte_t *e = pmap_leaf(pmap, va, &huge);
         if (!e || huge || !(*e & PTE_PRESENT)) continue;
 
-        pte_t pte = *e & ~(PTE_WRITABLE | PTE_USER | PTE_NX);
-
-        if (flags & PROT_WRITE) pte |= PTE_WRITABLE;
-        if ((flags & PROT_USER) && (flags & (PROT_READ | PROT_WRITE | PROT_EXEC))) pte |= PTE_USER;
-        if (!(flags & PROT_EXEC)) pte |= PTE_NX;
+        pte_t pte = (*e & ~(PTE_WRITABLE | PTE_USER | PTE_NX)) | pte_rights(flags);
 
         if (*e != pte) {
             *e = pte;

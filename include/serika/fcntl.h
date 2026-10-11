@@ -9,6 +9,7 @@
 #define O_TRUNC     00001000
 #define O_APPEND    00002000
 #define O_DIRECTORY 00200000
+#define O_CLOEXEC   02000000
 
 #define AT_FDCWD      -100
 #define AT_EMPTY_PATH 0x1000

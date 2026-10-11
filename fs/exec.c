@@ -1,4 +1,5 @@
 #include <serika/buddy.h>
+#include <serika/cpu.h>
 #include <serika/elf.h>
 #include <serika/errno.h>
 #include <serika/exec.h>
@@ -9,9 +10,12 @@
 #include <serika/slab.h>
 #include <serika/stat.h>
 #include <serika/string.h>
+#include <serika/syscall.h>
+#include <serika/task.h>
 #include <serika/vfs.h>
 
 #include <asm/arch.h>
+#include <asm/task.h>
 
 #define ELF_ET_DYN_BASE 0x555555554000ULL      /* linux's, without randomization */
 #define EXEC_MAX_PHNUM  64
@@ -218,8 +222,9 @@ static int setup_stack(struct mm *mm, const char *path, const char *const argv[]
     return err;
 }
 
-int task_create_exec(const char *path, const char *const argv[], const char *const envp[], int nice,
-                     struct task **out) {
+/* a new address space with path loaded and its stack built: where to start, and with what rsp */
+int exec_load(const char *path, const char *const argv[], const char *const envp[],
+              struct mm **out, uintptr_t *entry, uintptr_t *sp_out) {
     struct file *f;
 
     int err = vfs_open(path, O_RDONLY, 0, &f);
@@ -284,22 +289,11 @@ int task_create_exec(const char *path, const char *const argv[], const char *con
         .phnum = eh.e_phnum,
     };
 
-    uintptr_t sp;
-    if ((err = setup_stack(mm, path, argv, envp, &img, &sp)) != 0) goto out;
+    if ((err = setup_stack(mm, path, argv, envp, &img, sp_out)) != 0) goto out;
 
-    struct files *files = files_create();
-    struct sighand *sighand = sighand_create();
-    struct task *task = files && sighand ? task_create_mm(mm, files, sighand, img.entry, sp, nice) : NULL;
-
-    if (!task) {
-        if (files) files_put(files);
-        if (sighand) sighand_put(sighand);
-        err = -ENOMEM;
-        goto out;
-    }
-
-    mm = NULL; /* the task's now */
-    *out = task;
+    *out = mm;
+    *entry = img.entry;
+    mm = NULL; /* the caller's now */
 
 out:
     if (mm) mm_put(mm);
@@ -307,4 +301,102 @@ out:
     kfree(ph);
     vfs_close(f);
     return err;
+}
+
+/* a new process running path, a child of the caller. not runnable until sched_add_task() */
+int task_create_exec(const char *path, const char *const argv[], const char *const envp[], int nice,
+                     struct task **out) {
+    struct mm *mm;
+    uintptr_t entry, sp;
+
+    int err = exec_load(path, argv, envp, &mm, &entry, &sp);
+    if (err) return err;
+
+    struct files *files = files_create();
+    struct sighand *sighand = sighand_create();
+    struct task *task = files && sighand ? task_create_mm(mm, files, sighand, entry, sp, nice) : NULL;
+
+    if (!task) {
+        mm_put(mm);
+        if (files) files_put(files);
+        if (sighand) sighand_put(sighand);
+        return -ENOMEM;
+    }
+
+    *out = task;
+    return 0;
+}
+
+/* a NULL-ended user array of strings into area: the array first, then the strings. NULL is empty */
+static int copy_strings(uintptr_t uvec, char *area, size_t *used, const char ***out) {
+    size_t n = 0;
+    uintptr_t p;
+
+    *used = ALIGN_UP(*used, sizeof(char *));
+
+    for (;; n++) {
+        if ((n + 1) * sizeof(char *) > EXEC_ARGS_MAX - *used) return -E2BIG;
+        if (!uvec) break;
+        if (copy_from_user(&p, uvec + n * sizeof(char *), sizeof(p)) != 0) return -EFAULT;
+        if (!p) break;
+    }
+
+    const char **vec = (const char **)(area + *used);
+    *used += (n + 1) * sizeof(char *);
+
+    for (size_t i = 0; i < n; i++) {
+        if (copy_from_user(&p, uvec + i * sizeof(char *), sizeof(p)) != 0) return -EFAULT;
+
+        long len = strncpy_from_user(area + *used, p, EXEC_ARGS_MAX - *used);
+        if (len < 0) return len == -ENAMETOOLONG ? -E2BIG : len;
+
+        vec[i] = area + *used;
+        *used += len + 1;
+    }
+
+    vec[n] = NULL;
+    *out = vec;
+    return 0;
+}
+
+long sys_execve(long upath, long uargv, long uenvp) {
+    struct task *curr = current_task();
+
+    /* threads come later: there is one task to replace, and nobody else on the mm */
+    if (__atomic_load_n(&curr->mm->users, 2) != 1 || __atomic_load_n(&curr->sighand->users, 2) != 1) /* __ATOMIC_ACQUIRE */
+        return -EBUSY;
+
+    char *path;
+    int err = path_from_user(AT_FDCWD, upath, &path);
+    if (err) return err;
+
+    int order = SIZE_TO_ORDER(EXEC_ARGS_MAX);
+    uintptr_t area = (uintptr_t)alloc_pages(order);
+    if (!area) {
+        kfree(path);
+        return -ENOMEM;
+    }
+
+    const char **argv, **envp;
+    size_t used = 0;
+
+    struct mm *mm;
+    uintptr_t entry, sp;
+
+    if ((err = copy_strings(uargv, (char *)P2V(area), &used, &argv)) == 0 &&
+        (err = copy_strings(uenvp, (char *)P2V(area), &used, &envp)) == 0)
+        err = exec_load(path, argv, envp, &mm, &entry, &sp);
+
+    free_pages((void *)area, order);
+    kfree(path);
+
+    if (err) return err;
+
+    /* no way back from here: the old program is gone */
+    task_exec_mm(mm);
+    files_close_on_exec(curr->files);
+    signal_exec_reset();
+    arch_exec_regs(curr->tf, entry, sp);
+
+    return 0;
 }
