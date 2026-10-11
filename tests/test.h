@@ -37,6 +37,13 @@ static inline bool wait_for(volatile bool *flag, uint64_t ms) {
     return *flag;
 }
 
+struct task;
+
+/* tests/util.c. reaped id, 0 on timeout */
+long reap_within(struct task *t, long *status, uint64_t ms);
+long run_user(const uint8_t *code, size_t size, long *status);
+long run_exec(const char *path, long *status); /* the program's argv and envp are fixed */
+
 void test_run_all();
 
 bool test_buddy_merge();
@@ -62,9 +69,8 @@ bool test_smp_spread();
 bool test_smp_balance();
 
 bool test_user_task();
-bool test_user_fault();
-bool test_user_thread();
-bool test_user_kill();
+bool test_user_stack();
+bool test_thread_mm();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();
@@ -78,4 +84,7 @@ bool test_vfs_initrd();
 bool test_exec();
 bool test_exec_glibc();
 bool test_exec_files();
-bool test_exec_signals();
+
+bool test_signal_fault();
+bool test_signal_kill();
+bool test_signal_glibc();

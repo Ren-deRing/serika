@@ -7,7 +7,8 @@
 #include <unistd.h>
 
 /* exits 0x5e if every check holds, else the number of the failed one.
-   "abort" and "sleep" as argv[1] are for the kernel tests */
+   argv[1] picks a way to die instead, for the kernel tests: abort, segv, ill, fpe, trap, spin and sleep.
+   the last two never end by themselves: the test kills them */
 
 static volatile sig_atomic_t got_sig, got_code, got_pid;
 
@@ -33,10 +34,27 @@ static void on_segv(int sig, siginfo_t *si, void *uc) {
 }
 
 int main(int argc, char **argv) {
-    if (argc > 1 && strcmp(argv[1], "abort") == 0) abort();
-    if (argc > 1 && strcmp(argv[1], "sleep") == 0) {
-        sleep(10);
-        return 1;
+    if (argc > 1) {
+        const char *mode = argv[1];
+
+        if (strcmp(mode, "abort") == 0) abort();
+        if (strcmp(mode, "segv") == 0) *(volatile int *)0x1000 = 1;
+        if (strcmp(mode, "ill") == 0) __builtin_trap();
+        if (strcmp(mode, "trap") == 0) asm volatile ("int3");
+        if (strcmp(mode, "fpe") == 0) {
+            /* both volatile: 1 / x alone is undefined for 0, and the compiler drops the divide */
+            volatile int one = 1, zero = 0;
+            return one / zero;
+        }
+
+        /* in user mode on some cpu */
+        if (strcmp(mode, "spin") == 0) for (;;);
+
+        /* asleep in the kernel */
+        if (strcmp(mode, "sleep") == 0) {
+            sleep(10);
+            return 1;
+        }
     }
 
     struct sigaction sa;
