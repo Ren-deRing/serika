@@ -28,6 +28,7 @@ static struct test tests[] = {
     { "smp balance", test_smp_balance },
     { "user task",   test_user_task },
     { "user fault",  test_user_fault },
+    { "user thread", test_user_thread },
     { "wait sleep",  test_wait_sleep },
     { "wait pingpong", test_wait_pingpong },
     { "wait child",  test_wait_child },

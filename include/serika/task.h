@@ -74,6 +74,7 @@ void task_start_user(void);
 
 struct task *task_create(task_entry_t entry, int nice);
 struct task *task_create_user(const void *code, size_t size, int nice);
+struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice);
 struct task *task_create_boot(void);
 void task_free(struct task *task);
 void task_dead(struct task *task);

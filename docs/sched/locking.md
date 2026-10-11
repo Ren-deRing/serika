@@ -110,3 +110,7 @@ lock before it does anything else. `task_free()` calls both allocators, but only
 
 `mm->lock`, then the pmap lock, then the buddy and slab locks. A page fault takes `mm->lock`
 with irq on and nothing else held, like a system call.
+
+Threads share one `mm` (`task_create_thread()`, `mm_get()`), and the last `task_free()` drops
+it. Two threads faulting on the same page serialize on `mm->lock`. The second finds it mapped
+and returns. Pages are only added, never removed, so no other cpu needs a TLB flush yet.

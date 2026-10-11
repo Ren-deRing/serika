@@ -62,28 +62,23 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* not runnable until sched_add_task() */
-struct task *task_create_user(const void *code, size_t size, int nice) {
-    struct task *task = task_alloc((task_entry_t)USER_CODE_BASE, nice);
-    if (!task) return NULL;
-
+/* the task takes mm on success. on failure the caller still owns it */
+static int task_init_user(struct task *task, struct mm *mm, uintptr_t user_stack) {
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
-    struct mm *mm = mm_create();
     uintptr_t kstack_phys = (uintptr_t)alloc_pages(korder);
+    if (!kstack_phys) return -1;
 
-    if (!mm || !kstack_phys) goto fail;
-
-    if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
-    if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
-    if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
-
-    task->mm = mm;
-    task->pmap = mm->pmap;
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
 
-    if (arch_task_init(task) == -1) goto fail;
+    if (arch_task_init(task, user_stack) == -1) {
+        free_pages((void *)kstack_phys, korder);
+        return -1;
+    }
+
+    task->mm = mm;
+    task->pmap = mm->pmap;
 
     /* creator reaps */
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
@@ -91,13 +86,47 @@ struct task *task_create_user(const void *code, size_t size, int nice) {
     list_add_tail(&task->sibling, &task->parent->children);
     spin_unlock_irqrestore(&tasklist_lock, f);
 
+    return 0;
+}
+
+/* not runnable until sched_add_task() */
+struct task *task_create_user(const void *code, size_t size, int nice) {
+    struct task *task = task_alloc((task_entry_t)USER_CODE_BASE, nice);
+    if (!task) return NULL;
+
+    struct mm *mm = mm_create();
+    if (!mm) goto fail;
+
+    if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
+    if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
+    if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
+
+    if (task_init_user(task, mm, USER_STACK_TOP) != 0) goto fail;
+
     return task;
 
 fail:
     if (mm) mm_put(mm);
-    free_pages((void *)kstack_phys, korder);
     kfree(task);
     return NULL;
+}
+
+/* not runnable until sched_add_task(). shares proc's mm, user_stack is in a vma the caller mapped */
+struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice) {
+    if (!proc->mm) return NULL;
+
+    struct task *task = task_alloc((task_entry_t)entry, nice);
+    if (!task) return NULL;
+
+    mm_get(proc->mm);
+
+    if (task_init_user(task, proc->mm, user_stack) != 0) {
+        mm_put(proc->mm);
+        kfree(task);
+        return NULL;
+    }
+
+    return task;
 }
 
 struct task *task_create_boot(void) {

@@ -60,6 +60,7 @@ bool test_smp_balance();
 
 bool test_user_task();
 bool test_user_fault();
+bool test_user_thread();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();

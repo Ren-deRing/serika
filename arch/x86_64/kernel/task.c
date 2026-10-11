@@ -7,14 +7,14 @@
 
 #include <asm/arch.h>
 
-int arch_task_init(struct task *task) {
+int arch_task_init(struct task *task, uintptr_t user_stack) {
     task->tf = (struct trapframe *)((uintptr_t)task->kstack + TASK_KSTACK_SIZE - sizeof(struct trapframe));
 
     memset(task->tf, 0, sizeof(*task->tf));
 
     task->tf->rip    = (uintptr_t)task->entry;
     task->tf->rdi    = 0;
-    task->tf->rsp    = USER_STACK_TOP;
+    task->tf->rsp    = user_stack;
     task->tf->cs     = 0x23;
     task->tf->ss     = 0x1B;
     task->tf->rflags = 0x202; // IF

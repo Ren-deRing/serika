@@ -11,7 +11,7 @@ struct arch_task {
 
 struct task;
 
-int arch_task_init(struct task *task);
+int arch_task_init(struct task *task, uintptr_t user_stack);
 int arch_kthread_init(struct task *task);
 int arch_xsaves_init(struct task *task);
 
