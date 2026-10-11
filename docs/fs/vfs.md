@@ -28,6 +28,20 @@ some later path will invert.
 Lock order: inode mutex, then the buddy and slab locks. `mm->lock` never nests with an
 inode mutex in either direction yet.
 
+## File descriptors
+
+A task's `struct files` holds its fds, shared by its threads. Its spinlock covers the table
+only: `fd_get()` takes a reference on the file under it and lets go, and `close` drops the
+last reference after it. A new task gets the console on 0, 1 and 2.
+
+`file->pos_lock` is held across a whole `read` or `write`, user copies included, as Linux
+does. That is the one exception to rule 1: the data itself still goes through a bounce page,
+so no inode mutex is held while user memory is touched, and nothing on a fault path takes a
+`pos_lock`. Order: `pos_lock`, then the inode mutex, or `pos_lock`, then `mm->lock`.
+
+There is no cwd yet: a relative path starts at the root. The console is a char device, the
+only tty: it answers `TCGETS` so glibc buffers stdout by line, and reads find nothing.
+
 ## exec
 
 `task_create_exec()` loads a static ELF: `ET_EXEC` where it was linked, `ET_DYN` (static-pie)
@@ -46,4 +60,6 @@ startup: `AT_PHDR` (for TLS), `AT_PAGESZ`, `AT_RANDOM` (16 bytes, not random yet
 - fs/ramfs.c:     the root fs
 - fs/initramfs.c: cpio newc unpacking
 - fs/exec.c:      the ELF loader
+- fs/file.c:      fd tables and the file system calls
+- fs/console.c:   the console
 - user/:          programs packed into the initrd by `make initrd`

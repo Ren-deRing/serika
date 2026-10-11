@@ -69,3 +69,28 @@ bool test_tlb_mprotect() {
     TEST_ASSERT(status == 11);
     return true;
 }
+
+/* the same writer: unmapped under it, it must fault, not write into a freed frame */
+bool test_tlb_munmap() {
+    struct task *t = task_create_user(spin_write, sizeof(spin_write), 0);
+    TEST_ASSERT(t);
+    TEST_ASSERT(mm_map(t->mm, TLB_PAGE, PAGE_SIZE, PROT_READ | PROT_WRITE) == 0);
+
+    sched_add_task(t);
+
+    uint64_t until = rdtsc() + curcpu->tsc_freq_hz / 10; /* 100ms */
+    while (!pmap_extract(t->mm->pmap, TLB_PAGE) && rdtsc() < until) arch_pause();
+    TEST_ASSERT(pmap_extract(t->mm->pmap, TLB_PAGE));
+
+    TEST_ASSERT(mm_unmap(t->mm, TLB_PAGE, PAGE_SIZE) == 0);
+    TEST_ASSERT(pmap_extract(t->mm->pmap, TLB_PAGE) == 0);
+
+    long status = 0, reaped = 0;
+    until = rdtsc() + curcpu->tsc_freq_hz; /* 1s */
+
+    while ((reaped = task_wait(t, &status, WNOHANG)) == 0 && rdtsc() < until) arch_pause();
+
+    TEST_ASSERT(reaped > 0);
+    TEST_ASSERT(status == 11);
+    return true;
+}

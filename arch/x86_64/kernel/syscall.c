@@ -32,7 +32,8 @@ void syscall_init(void) {
 
 /* kill the task instead */
 notrace void syscall_bad_rip(void) {
-    task_exit(11); /* no signals yet */
+    arch_irq_enable(); /* off for sysret. task_exit() closes the files */
+    task_exit(11); /* TODO: no signals yet */
 }
 
 /* called from syscall_entry, irq off */

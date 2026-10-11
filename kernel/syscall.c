@@ -15,28 +15,6 @@ static long sys_exit(long code) {
     return 0;
 }
 
-/* TODO: no fd table yet */
-static long sys_write(long fd, long buf, long count) {
-    char kbuf[256];
-    long done = 0;
-
-    if (fd != 1 && fd != 2) return -EBADF;
-    if (count < 0) return -EINVAL;
-
-    while (done < count) {
-        size_t n = count - done;
-        if (n > sizeof(kbuf)) n = sizeof(kbuf);
-
-        int err = copy_from_user(kbuf, buf + done, n);
-        if (err) return done ? done : err;
-
-        printk("%.*s", (int)n, kbuf);
-        done += n;
-    }
-
-    return done;
-}
-
 /* TODO: private anonymous only */
 static long sys_mmap(long addr, long len, long prot, long flags, long fd, long off) {
     (void)addr; (void)fd; (void)off;
@@ -47,6 +25,10 @@ static long sys_mmap(long addr, long len, long prot, long flags, long fd, long o
     }
 
     return mm_mmap(current_task()->mm, len, prot);
+}
+
+static long sys_munmap(long addr, long len) {
+    return mm_unmap(current_task()->mm, addr, len);
 }
 
 static long sys_mprotect(long addr, long len, long prot) {
@@ -90,16 +72,27 @@ static long sys_set_tid_address(long tidptr) {
 
 long syscall_dispatch(long nr, const long args[6]) {
     switch (nr) {
+        case SYS_READ:            return sys_read(args[0], args[1], args[2]);
         case SYS_WRITE:           return sys_write(args[0], args[1], args[2]);
+        case SYS_CLOSE:           return sys_close(args[0]);
+        case SYS_FSTAT:           return sys_fstat(args[0], args[1]);
+        case SYS_LSEEK:           return sys_lseek(args[0], args[1], args[2]);
         case SYS_MMAP:            return sys_mmap(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_MPROTECT:        return sys_mprotect(args[0], args[1], args[2]);
+        case SYS_MUNMAP:          return sys_munmap(args[0], args[1]);
         case SYS_BRK:             return sys_brk(args[0]);
         case SYS_RT_SIGACTION:    return sys_rt_sigaction(args[0], args[1], args[2], args[3]);
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
+        case SYS_IOCTL:           return sys_ioctl(args[0], args[1], args[2]);
+        case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
         case SYS_EXIT:            return sys_exit(args[0]);
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
+        case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
+        case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
         case SYS_EXIT_GROUP:      return sys_exit(args[0]); /* no thread groups yet */
+        case SYS_OPENAT:          return sys_openat(args[0], args[1], args[2], args[3]);
+        case SYS_NEWFSTATAT:      return sys_newfstatat(args[0], args[1], args[2], args[3]);
     }
 
     printk("syscall: %ld not implemented -- task %lu\n", nr, current_task()->id);

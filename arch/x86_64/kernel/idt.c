@@ -82,13 +82,15 @@ notrace static void page_fault_handler(struct trapframe *tf, void *data) {
     /* cr2 is read. user code ran with irq on, so do we */
     arch_irq_enable();
     int ret = mm_fault(current_task()->mm, addr, access);
-    arch_irq_disable();
 
+    /* still irq on: task_exit() closes the files */
     if (ret != 0) {
         printk("fault: task %lu killed -- %s at 0x%lx, rip 0x%lx\n", current_task()->id,
                ret == -EFAULT ? "bad access" : "out of memory", addr, tf->rip);
         task_exit(11); /* TODO: no signals yet */
     }
+
+    arch_irq_disable();
 }
 
 void idt_set_descriptor(uint8_t vector, void* isr, uint8_t flags, uint8_t ist) {

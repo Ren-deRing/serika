@@ -7,12 +7,16 @@
 #include <serika/vfs.h>
 
 struct inode *vfs_root;
+struct inode *console_inode;
 
 static volatile uint64_t next_ino = 1;
 
 void vfs_init(void) {
     vfs_root = ramfs_root();
     if (!vfs_root) panic("vfs: unable to create the root -- out of memory?");
+
+    console_inode = console_create();
+    if (!console_inode) panic("vfs: unable to create the console -- out of memory?");
 }
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
@@ -154,19 +158,33 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
     }
 
     struct file *f = NULL;
-    if (!err && !(f = kmalloc(sizeof(struct file)))) err = -ENOMEM;
+    if (!err && !(f = file_alloc(inode, flags))) err = -ENOMEM;
 
     if (err) {
         if (inode) iput(inode);
         return err;
     }
 
+    *out = f;
+    return 0;
+}
+
+/* NULL on failure, and the reference is still the caller's */
+struct file *file_alloc(struct inode *inode, uint32_t flags) {
+    struct file *f = kmalloc(sizeof(struct file));
+    if (!f) return NULL;
+
     f->inode = inode;
     f->flags = flags;
     f->refs  = 1;
+    f->pos   = 0;
+    mutex_init(&f->pos_lock);
 
-    *out = f;
-    return 0;
+    return f;
+}
+
+void fget(struct file *f) {
+    __atomic_add_fetch(&f->refs, 1, 0); /* __ATOMIC_RELAXED */
 }
 
 void vfs_close(struct file *f) {

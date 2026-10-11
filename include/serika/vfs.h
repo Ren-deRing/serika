@@ -34,12 +34,24 @@ struct inode {
 };
 
 struct file {
-    struct inode *inode; /* our reference */
-    uint32_t      flags; /* O_* */
-    uint32_t      refs;  /* atomic */
+    struct inode *inode;    /* our reference */
+    uint32_t      flags;    /* O_* */
+    uint32_t      refs;     /* atomic */
+    uint64_t      pos;      /* pos_lock */
+    struct mutex  pos_lock; /* across a whole read or write, user copies included */
+};
+
+/* a task's fds. threads share it */
+#define FILES_MAX 256
+
+struct files {
+    spinlock_t    lock;  /* fd. nothing is taken under it */
+    uint32_t      users; /* atomic */
+    struct file  *fd[FILES_MAX];
 };
 
 extern struct inode *vfs_root;
+extern struct inode *console_inode; /* fd 0, 1 and 2. the only tty */
 
 void vfs_init(void);
 
@@ -49,7 +61,9 @@ void iput(struct inode *inode);
 
 /* absolute paths only, no cwd yet */
 int  vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out);
-void vfs_close(struct file *f);
+void vfs_close(struct file *f); /* drops a reference */
+void fget(struct file *f);
+struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
 
 /* kernel buffers. the caller keeps the position */
@@ -57,4 +71,9 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 struct inode *ramfs_root(void);
+struct inode *console_create(void);
 void initramfs_unpack(void);
+
+struct files *files_create(void); /* 0, 1 and 2 on the console */
+void files_get(struct files *files);
+void files_put(struct files *files);

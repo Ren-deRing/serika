@@ -12,6 +12,7 @@
 #include <serika/slab.h>
 #include <serika/string.h>
 #include <serika/syscall.h>
+#include <serika/vfs.h>
 #include <serika/wait.h>
 
 static volatile uint64_t next_id = 0;
@@ -62,8 +63,8 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* not runnable until sched_add_task(). takes mm on success, the caller still owns it on failure */
-struct task *task_create_mm(struct mm *mm, uintptr_t entry, uintptr_t user_stack, int nice) {
+/* not runnable until sched_add_task(). takes mm and files on success, the caller still owns them on failure */
+struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry, uintptr_t user_stack, int nice) {
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
     struct task *task = task_alloc((task_entry_t)entry, nice);
@@ -86,6 +87,7 @@ struct task *task_create_mm(struct mm *mm, uintptr_t entry, uintptr_t user_stack
 
     task->mm = mm;
     task->pmap = mm->pmap;
+    task->files = files;
 
     /* creator reaps */
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
@@ -99,19 +101,22 @@ struct task *task_create_mm(struct mm *mm, uintptr_t entry, uintptr_t user_stack
 /* not runnable until sched_add_task() */
 struct task *task_create_user(const void *code, size_t size, int nice) {
     struct mm *mm = mm_create();
-    if (!mm) return NULL;
+    struct files *files = files_create();
+
+    if (!mm || !files) goto fail;
 
     if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
     if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
     if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
 
-    struct task *task = task_create_mm(mm, USER_CODE_BASE, USER_STACK_TOP, nice);
+    struct task *task = task_create_mm(mm, files, USER_CODE_BASE, USER_STACK_TOP, nice);
     if (!task) goto fail;
 
     return task;
 
 fail:
-    mm_put(mm);
+    if (mm) mm_put(mm);
+    if (files) files_put(files);
     return NULL;
 }
 
@@ -120,9 +125,13 @@ struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t us
     if (!proc->mm) return NULL;
 
     mm_get(proc->mm);
+    files_get(proc->files);
 
-    struct task *task = task_create_mm(proc->mm, entry, user_stack, nice);
-    if (!task) mm_put(proc->mm);
+    struct task *task = task_create_mm(proc->mm, proc->files, entry, user_stack, nice);
+    if (!task) {
+        mm_put(proc->mm);
+        files_put(proc->files);
+    }
 
     return task;
 }
@@ -139,8 +148,10 @@ struct task *task_create_boot(void) {
     return task;
 }
 
+/* a task that ran dropped its files in task_exit() */
 void task_free(struct task *task) {
     if (task->mm) mm_put(task->mm);
+    if (task->files) files_put(task->files);
 
     if (task->kstack) free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
 
@@ -249,6 +260,12 @@ long task_wait(struct task *child, long *status, int options) {
 
 void task_exit(long code) {
     struct task *curr = current_task();
+
+    /* while we still run: task_free() may come from finish_task_switch(), irq off */
+    if (curr->files) {
+        files_put(curr->files);
+        curr->files = NULL;
+    }
 
     exit_notify(curr);
 

@@ -286,8 +286,11 @@ int task_create_exec(const char *path, const char *const argv[], const char *con
     uintptr_t sp;
     if ((err = setup_stack(mm, path, argv, envp, &img, &sp)) != 0) goto out;
 
-    struct task *task = task_create_mm(mm, img.entry, sp, nice);
+    struct files *files = files_create();
+    struct task *task = files ? task_create_mm(mm, files, img.entry, sp, nice) : NULL;
+
     if (!task) {
+        if (files) files_put(files);
         err = -ENOMEM;
         goto out;
     }

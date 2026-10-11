@@ -44,6 +44,7 @@ struct task {
 
     struct pmap      *pmap;          /* mm->pmap, or the kernel's */
     struct mm        *mm;            /* NULL for kthreads */
+    struct files     *files;         /* NULL for kthreads */
 
     struct task      *parent;        /* NULL: frees itself on exit. tasklist_lock */
     list_node         children;      /* tasklist_lock */
@@ -73,7 +74,7 @@ void task_start(void);
 void task_start_user(void);
 
 struct task *task_create(task_entry_t entry, int nice);
-struct task *task_create_mm(struct mm *mm, uintptr_t entry, uintptr_t user_stack, int nice);
+struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry, uintptr_t user_stack, int nice);
 struct task *task_create_user(const void *code, size_t size, int nice);
 struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice);
 struct task *task_create_boot(void);

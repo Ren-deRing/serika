@@ -411,6 +411,36 @@ bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags
     return changed;
 }
 
+size_t pmap_clear(struct pmap *pmap, uintptr_t virt, size_t size, uintptr_t *phys, size_t max) {
+    if (!pmap || size == 0) return 0;
+    if ((virt & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1))) return 0;
+    if (virt + size < virt) return 0;
+
+    uint64_t f = spin_lock_irqsave(&pmap->lock);
+
+    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
+    size_t count = 0;
+
+    for (uintptr_t va = virt; va < virt + size && count < max; va += PAGE_SIZE) {
+        if (!(pml4[PML4_INDEX(va)] & PTE_PRESENT)) continue;
+        pdpte_t *pdpt = (pdpte_t *)P2V(pml4[PML4_INDEX(va)] & PTE_ADDR_MASK);
+
+        if (!(pdpt[PDPT_INDEX(va)] & PTE_PRESENT) || (pdpt[PDPT_INDEX(va)] & PDPTE_PS)) continue;
+        pde_t *pd = (pde_t *)P2V(pdpt[PDPT_INDEX(va)] & PTE_ADDR_MASK);
+
+        if (!(pd[PD_INDEX(va)] & PTE_PRESENT) || (pd[PD_INDEX(va)] & PDE_PS)) continue;
+        pte_t *pt = (pte_t *)P2V(pd[PD_INDEX(va)] & PTE_ADDR_MASK);
+
+        if (!(pt[PT_INDEX(va)] & PTE_PRESENT)) continue;
+
+        phys[count++] = pt[PT_INDEX(va)] & PTE_ADDR_MASK;
+        pt[PT_INDEX(va)] = 0;
+    }
+
+    spin_unlock_irqrestore(&pmap->lock, f);
+    return count;
+}
+
 void pmap_destroy(struct pmap *pmap) {
     if (!pmap || pmap == pmap_kernel()) return;
     if ((read_cr3() & PTE_ADDR_MASK) == pmap->pm_root_phys) return;

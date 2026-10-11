@@ -17,6 +17,7 @@ struct pmap* pmap_create(void);
 
 int pmap_map(struct pmap *pmap, uintptr_t virt, uintptr_t phys, size_t size, uint32_t flags);
 void pmap_unmap(struct pmap *pmap, uintptr_t virt, size_t size);
+size_t pmap_clear(struct pmap *pmap, uintptr_t virt, size_t size, uintptr_t *phys, size_t max); /* no flush */
 bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags); /* no flush: pmap_shootdown() */
 uintptr_t pmap_extract(struct pmap *pmap, uintptr_t va);
 

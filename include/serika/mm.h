@@ -1,6 +1,7 @@
 #pragma once
 
 #include <serika/lock.h>
+#include <serika/mutex.h>
 #include <serika/pmap.h>
 
 #include <deps/tree.h>
@@ -24,6 +25,7 @@ struct mm {
     struct pmap     *pmap;
     struct vma_tree  vmas;  /* never overlap */
     spinlock_t       lock;  /* vmas, brk, mmap_next, and faults filling the pmap */
+    struct mutex     map_mutex; /* held across a change to the vmas, which may shoot down */
     uint32_t         users;
 
     uintptr_t        brk_start;
@@ -51,9 +53,11 @@ int mm_map(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot);
 int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access);
 int mm_copy_to(struct mm *mm, uintptr_t addr, const void *src, size_t size);
 int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot);
+int mm_unmap(struct mm *mm, uintptr_t addr, size_t size);
 long mm_mmap(struct mm *mm, size_t size, uint32_t prot);
 void mm_set_brk(struct mm *mm, uintptr_t start);
 uintptr_t mm_brk(struct mm *mm, uintptr_t brk);
 
 int copy_to_user(uintptr_t to, const void *from, size_t size);
 int copy_from_user(void *to, uintptr_t from, size_t size);
+long strncpy_from_user(char *to, uintptr_t from, size_t max); /* length, nul not counted */

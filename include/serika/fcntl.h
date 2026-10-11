@@ -9,3 +9,10 @@
 #define O_TRUNC     00001000
 #define O_APPEND    00002000
 #define O_DIRECTORY 00200000
+
+#define AT_FDCWD      -100
+#define AT_EMPTY_PATH 0x1000
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2

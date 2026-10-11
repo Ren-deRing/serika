@@ -50,6 +50,7 @@ bool test_slab_state();
 bool test_mm_fault();
 bool test_tlb_storm();
 bool test_tlb_mprotect();
+bool test_tlb_munmap();
 
 bool test_tick_rate();
 
@@ -75,3 +76,4 @@ bool test_vfs_basic();
 bool test_vfs_initrd();
 bool test_exec();
 bool test_exec_glibc();
+bool test_exec_files();

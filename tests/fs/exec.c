@@ -50,3 +50,12 @@ bool test_exec_glibc() {
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }
+
+/* files, the console, time and munmap, through glibc */
+bool test_exec_files() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/files", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}
