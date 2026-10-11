@@ -11,10 +11,20 @@
 #define USER_SPACE_END 0x0000800000000000ULL
 #define MMAP_TOP       0x00007f0000000000ULL /* mmap grows down from here, below the stack */
 
+#define MAP_SHARED          0x000001
+#define MAP_PRIVATE         0x000002
+#define MAP_FIXED           0x000010
+#define MAP_ANONYMOUS       0x000020
+#define MAP_FIXED_NOREPLACE 0x100000
+
+struct file;
+
 struct vma {
-    uintptr_t start;
-    uintptr_t end;  /* exclusive */
-    uint32_t  prot; /* PROT_READ, PROT_WRITE, PROT_EXEC */
+    uintptr_t    start;
+    uintptr_t    end;  /* exclusive */
+    uint32_t     prot; /* PROT_READ, PROT_WRITE, PROT_EXEC */
+    struct file *file; /* MAP_PRIVATE of a file, our reference. NULL: anonymous */
+    uint64_t     off;  /* where start is in it */
 
     RB_ENTRY(vma) node;
 };
@@ -55,7 +65,8 @@ int mm_write(struct mm *mm, uintptr_t addr, const void *src, size_t size);
 struct mm *mm_fork(struct mm *old);
 int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot);
 int mm_unmap(struct mm *mm, uintptr_t addr, size_t size);
-long mm_mmap(struct mm *mm, size_t size, uint32_t prot);
+long mm_mmap(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot, uint32_t flags, struct file *file, uint64_t off);
+uintptr_t mm_take_area(struct mm *mm, size_t size);
 void mm_set_brk(struct mm *mm, uintptr_t start);
 uintptr_t mm_brk(struct mm *mm, uintptr_t brk);
 

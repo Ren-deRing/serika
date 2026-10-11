@@ -22,6 +22,19 @@ System calls touch user memory with `copy_to_user()` and `copy_from_user()`: und
 `mm->lock`, against the vma's prot, filling pages that are not there yet. No page fault is
 taken in the kernel.
 
+## File mappings
+
+A vma may map a file, `MAP_PRIVATE` only: it holds a reference on the `struct file` and the
+offset of its first page. A fault reads the page into a fresh frame with `kernel_read()`,
+zeros past the end of the file, and the frame is the mm's own from then on: nothing is
+shared with the file or with other mms yet (no page cache). Splitting, trimming and forking a
+vma carry the reference and the offset along (`vma_piece()`).
+
+The read takes the inode's mutex under `mm->lock`. That is the order: `mm->lock`, then the
+inode mutex. The vfs never touches user memory with an inode mutex held, so the other order
+does not exist. `MAP_FIXED` unmaps whatever was in its range first, as `ld.so` expects when
+it lays segments over the area it reserved.
+
 ## Copy-on-write
 
 Each frame a user pmap maps has a count in its `struct page` (`refs`): 1 when a fault brings

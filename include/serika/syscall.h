@@ -13,6 +13,8 @@
 #define SYS_RT_SIGPROCMASK   14
 #define SYS_RT_SIGRETURN     15
 #define SYS_IOCTL            16
+#define SYS_PREAD64          17
+#define SYS_ACCESS           21
 #define SYS_NANOSLEEP        35
 #define SYS_GETPID           39
 #define SYS_CLONE            56
@@ -33,6 +35,8 @@
 #define SYS_TGKILL          234
 #define SYS_OPENAT          257
 #define SYS_NEWFSTATAT      262
+#define SYS_FACCESSAT       269
+#define SYS_FACCESSAT2      439
 
 #define WNOHANG 1
 
@@ -50,6 +54,9 @@ long sys_lseek(long fd, long off, long whence);
 long sys_fstat(long fd, long ubuf);
 long sys_newfstatat(long dirfd, long upath, long ubuf, long flags);
 long sys_ioctl(long fd, long cmd, long arg);
+long sys_pread64(long fd, long buf, long count, long off);
+long sys_access(long upath, long mode);
+long sys_faccessat(long dirfd, long upath, long mode);
 
 /* kernel/time.c */
 long sys_clock_gettime(long clk, long utp);

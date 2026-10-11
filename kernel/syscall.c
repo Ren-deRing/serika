@@ -1,31 +1,42 @@
 #include <serika/cpu.h>
 #include <serika/errno.h>
+#include <serika/fcntl.h>
 #include <serika/mm.h>
 #include <serika/printk.h>
+#include <serika/stat.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
-
-#define MAP_SHARED    0x01
-#define MAP_PRIVATE   0x02
-#define MAP_FIXED     0x10
-#define MAP_ANONYMOUS 0x20
+#include <serika/vfs.h>
 
 static long sys_exit(long code) {
     task_exit((code & 0xff) << 8);
     return 0;
 }
 
-/* TODO: private anonymous only */
+/* private only: anonymous, or a file read in page by page as it is touched */
 static long sys_mmap(long addr, long len, long prot, long flags, long fd, long off) {
-    (void)addr; (void)fd; (void)off;
+    struct file *file = NULL;
 
-    if ((flags & (MAP_SHARED | MAP_PRIVATE)) != MAP_PRIVATE || !(flags & MAP_ANONYMOUS) || (flags & MAP_FIXED)) {
+    if ((flags & (MAP_SHARED | MAP_PRIVATE)) != MAP_PRIVATE) {
         printk("syscall: mmap flags 0x%lx not supported -- task %lu\n", flags, current_task()->id);
         return -EINVAL;
     }
 
-    return mm_mmap(current_task()->mm, len, prot);
+    if (!(flags & MAP_ANONYMOUS)) {
+        if (!(file = fd_get(fd))) return -EBADF;
+
+        if (!S_ISREG(file->inode->mode) || (file->flags & O_ACCMODE) == O_WRONLY) {
+            vfs_close(file);
+            return -EACCES;
+        }
+    }
+
+    long ret = mm_mmap(current_task()->mm, addr, len, prot, flags, file, file ? off : 0);
+
+    if (file) vfs_close(file);
+    return ret;
 }
+
 
 static long sys_munmap(long addr, long len) {
     return mm_unmap(current_task()->mm, addr, len);
@@ -60,6 +71,8 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_RT_SIGACTION:    return sys_rt_sigaction(args[0], args[1], args[2], args[3]);
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
         case SYS_IOCTL:           return sys_ioctl(args[0], args[1], args[2]);
+        case SYS_PREAD64:         return sys_pread64(args[0], args[1], args[2], args[3]);
+        case SYS_ACCESS:          return sys_access(args[0], args[1]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
         case SYS_GETPID:          return sys_getpid();
         case SYS_CLONE:           return sys_clone(args[0], args[1], args[2], args[3], args[4]);
@@ -80,6 +93,8 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_TGKILL:          return sys_tgkill(args[0], args[1], args[2]);
         case SYS_OPENAT:          return sys_openat(args[0], args[1], args[2], args[3]);
         case SYS_NEWFSTATAT:      return sys_newfstatat(args[0], args[1], args[2], args[3]);
+        case SYS_FACCESSAT:       return sys_faccessat(args[0], args[1], args[2]);
+        case SYS_FACCESSAT2:      return sys_faccessat(args[0], args[1], args[2]); /* flags: no users to tell apart */
     }
 
     printk("syscall: %ld not implemented -- task %lu\n", nr, current_task()->id);

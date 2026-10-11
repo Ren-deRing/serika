@@ -79,7 +79,7 @@ static int fd_install(struct files *files, struct file *f, bool cloexec) {
 }
 
 /* a reference of our own: another thread may close the fd meanwhile */
-static struct file *fd_get(long fd) {
+struct file *fd_get(long fd) {
     struct files *files = current_task()->files;
     struct file *f = NULL;
 
@@ -157,27 +157,17 @@ long sys_close(long fd) {
 }
 
 /* data goes through a bounce page: no inode lock is held while user memory is touched */
-long sys_read(long fd, long buf, long count) {
-    if (count < 0) return -EINVAL;
-
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
+static long read_to_user(struct file *f, long buf, long count, uint64_t *pos) {
     uintptr_t bounce = (uintptr_t)alloc_pages(0);
-    if (!bounce) {
-        vfs_close(f);
-        return -ENOMEM;
-    }
+    if (!bounce) return -ENOMEM;
 
     long done = 0;
-
-    mutex_lock(&f->pos_lock);
 
     while (done < count) {
         size_t n = count - done;
         if (n > PAGE_SIZE) n = PAGE_SIZE;
 
-        long r = kernel_read(f, (void *)P2V(bounce), n, &f->pos);
+        long r = kernel_read(f, (void *)P2V(bounce), n, pos);
         if (r <= 0) {
             if (!done) done = r;
             break;
@@ -193,12 +183,38 @@ long sys_read(long fd, long buf, long count) {
         if ((size_t)r < n) break; /* the end, or a console with nothing more */
     }
 
-    mutex_unlock(&f->pos_lock);
-
     free_pages((void *)bounce, 0);
-    vfs_close(f);
     return done;
 }
+
+long sys_read(long fd, long buf, long count) {
+    if (count < 0) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    mutex_lock(&f->pos_lock);
+    long ret = read_to_user(f, buf, count, &f->pos);
+    mutex_unlock(&f->pos_lock);
+
+    vfs_close(f);
+    return ret;
+}
+
+/* at off, the file's position untouched: no pos_lock */
+long sys_pread64(long fd, long buf, long count, long off) {
+    if (count < 0 || off < 0) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    uint64_t pos = off;
+    long ret = S_ISCHR(f->inode->mode) ? -ESPIPE : read_to_user(f, buf, count, &pos);
+
+    vfs_close(f);
+    return ret;
+}
+
 
 long sys_write(long fd, long buf, long count) {
     if (count < 0) return -EINVAL;
@@ -404,4 +420,26 @@ void files_close_on_exec(struct files *files) {
 
         if (f) vfs_close(f);
     }
+}
+
+/* no users or permissions yet: whatever is there may be used */
+long sys_faccessat(long dirfd, long upath, long mode) {
+    (void)mode;
+
+    char *path;
+    struct file *f;
+
+    int err = path_from_user(dirfd, upath, &path);
+    if (err) return err;
+
+    err = vfs_open(path, O_RDONLY, 0, &f);
+    kfree(path);
+    if (err) return err;
+
+    vfs_close(f);
+    return 0;
+}
+
+long sys_access(long upath, long mode) {
+    return sys_faccessat(AT_FDCWD, upath, mode);
 }

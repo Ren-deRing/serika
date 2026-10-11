@@ -137,9 +137,10 @@ static uintptr_t put_string(uint8_t *buf, uintptr_t sp, uintptr_t *at, const cha
 }
 
 struct exec_image {
-    uintptr_t entry;
+    uintptr_t entry; /* the program's, for AT_ENTRY. with ld.so it is not where we start */
     uintptr_t phdr;
     uint64_t  phnum;
+    uintptr_t base;  /* ld.so's, 0 without one */
 };
 
 /* sysv: argc, argv, NULL, envp, NULL, auxv at sp (16 aligned), strings above */
@@ -195,7 +196,7 @@ static int setup_stack(struct mm *mm, const char *path, const char *const argv[]
         AT_PHENT,    sizeof(Elf64_Phdr),
         AT_PHNUM,    img->phnum,
         AT_PAGESZ,   PAGE_SIZE,
-        AT_BASE,     0, /* no interpreter yet */
+        AT_BASE,     img->base,
         AT_FLAGS,    0,
         AT_ENTRY,    img->entry,
         AT_UID,      0,
@@ -222,6 +223,97 @@ static int setup_stack(struct mm *mm, const char *path, const char *const argv[]
     return err;
 }
 
+/* PT_INTERP: the path of the program that loads this one */
+static int read_interp(struct file *f, const Elf64_Phdr *ph, char **out) {
+    if (ph->p_filesz < 2 || ph->p_filesz > PATH_MAX) return -ENOEXEC;
+
+    char *path = kmalloc(PATH_MAX);
+    if (!path) return -ENOMEM;
+
+    int err = read_exact(f, path, ph->p_filesz, ph->p_offset);
+    if (!err && path[ph->p_filesz - 1] != '\0') err = -ENOEXEC;
+
+    if (err) {
+        kfree(path);
+        return err;
+    }
+
+    *out = path;
+    return 0;
+}
+
+/* ld.so: ET_DYN with no interpreter of its own, in an mmap area of its size */
+static int load_interp(struct mm *mm, const char *path, void *bounce, uintptr_t *base, uintptr_t *entry) {
+    struct file *f;
+
+    int err = vfs_open(path, O_RDONLY, 0, &f);
+    if (err) return err;
+
+    Elf64_Ehdr eh;
+    Elf64_Phdr *ph = NULL;
+
+    if (!S_ISREG(f->inode->mode)) {
+        err = -EACCES;
+        goto out;
+    }
+
+    if ((err = read_exact(f, &eh, sizeof(eh), 0)) != 0) goto out;
+    if ((err = check_ehdr(&eh)) != 0) goto out;
+
+    if (eh.e_type != ET_DYN) {
+        err = -ENOEXEC;
+        goto out;
+    }
+
+    if (!(ph = kmalloc(eh.e_phnum * sizeof(Elf64_Phdr)))) {
+        err = -ENOMEM;
+        goto out;
+    }
+
+    if ((err = read_exact(f, ph, eh.e_phnum * sizeof(Elf64_Phdr), eh.e_phoff)) != 0) goto out;
+
+    uintptr_t lo = UINTPTR_MAX, hi = 0;
+
+    for (int i = 0; i < eh.e_phnum; i++) {
+        if (ph[i].p_type == PT_INTERP) {
+            err = -ENOEXEC;
+            goto out;
+        }
+
+        if (ph[i].p_type != PT_LOAD || ph[i].p_memsz == 0) continue;
+
+        if (ALIGN_DOWN(ph[i].p_vaddr, PAGE_SIZE) < lo) lo = ALIGN_DOWN(ph[i].p_vaddr, PAGE_SIZE);
+        if (ph[i].p_vaddr + ph[i].p_memsz > hi)      hi = ph[i].p_vaddr + ph[i].p_memsz;
+    }
+
+    if (hi <= lo) {
+        err = -ENOEXEC;
+        goto out;
+    }
+
+    uintptr_t area = mm_take_area(mm, ALIGN_UP(hi, PAGE_SIZE) - lo);
+    if (!area) {
+        err = -ENOMEM;
+        goto out;
+    }
+
+    uintptr_t bias = area - lo;
+
+    for (int i = 0; i < eh.e_phnum; i++) {
+        if (ph[i].p_type != PT_LOAD || ph[i].p_memsz == 0) continue;
+
+        if ((err = load_segment(f, mm, &ph[i], bias, bounce)) != 0) goto out;
+    }
+
+    *base = bias;
+    *entry = bias + eh.e_entry;
+
+out:
+    kfree(ph);
+    vfs_close(f);
+    return err;
+}
+
 /* a new address space with path loaded and its stack built: where to start, and with what rsp */
 int exec_load(const char *path, const char *const argv[], const char *const envp[],
               struct mm **out, uintptr_t *entry, uintptr_t *sp_out) {
@@ -234,6 +326,7 @@ int exec_load(const char *path, const char *const argv[], const char *const envp
     Elf64_Phdr *ph = NULL;
     struct mm *mm = NULL;
     uintptr_t bounce = 0;
+    char *interp = NULL;
 
     if (!S_ISREG(f->inode->mode)) {
         err = -EACCES;
@@ -254,15 +347,12 @@ int exec_load(const char *path, const char *const argv[], const char *const envp
 
     if ((err = read_exact(f, ph, eh.e_phnum * sizeof(Elf64_Phdr), eh.e_phoff)) != 0) goto out;
 
-    /* dynamic: needs ld.so loaded next to it, not yet */
+    /* dynamic: ld.so goes in next to it and starts first */
     for (int i = 0; i < eh.e_phnum; i++) {
-        if (ph[i].p_type == PT_INTERP) {
-            err = -ENOEXEC;
-            goto out;
-        }
+        if (ph[i].p_type == PT_INTERP && !interp && (err = read_interp(f, &ph[i], &interp)) != 0) goto out;
     }
 
-    /* static-pie has no interpreter: it relocates itself wherever it lands */
+    /* a pie, static or not, is placed: at linux's spot */
     uintptr_t bias = eh.e_type == ET_DYN ? ELF_ET_DYN_BASE : 0;
 
     uintptr_t image_end = 0;
@@ -289,15 +379,20 @@ int exec_load(const char *path, const char *const argv[], const char *const envp
         .phnum = eh.e_phnum,
     };
 
+    uintptr_t start = img.entry;
+
+    if (interp && (err = load_interp(mm, interp, (void *)P2V(bounce), &img.base, &start)) != 0) goto out;
+
     if ((err = setup_stack(mm, path, argv, envp, &img, sp_out)) != 0) goto out;
 
     *out = mm;
-    *entry = img.entry;
+    *entry = start;
     mm = NULL; /* the caller's now */
 
 out:
     if (mm) mm_put(mm);
     free_pages((void *)bounce, 0);
+    kfree(interp);
     kfree(ph);
     vfs_close(f);
     return err;

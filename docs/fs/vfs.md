@@ -44,9 +44,11 @@ only tty: it answers `TCGETS` so glibc buffers stdout by line, and reads find no
 
 ## exec
 
-`task_create_exec()` loads a static ELF: `ET_EXEC` where it was linked, `ET_DYN` (static-pie)
-at `0x555555554000`. `PT_INTERP` is refused until `ld.so` can be loaded next to it. Each
-`PT_LOAD` becomes a vma with its `p_flags`, and its file part is copied in. Pages come
+`exec_load()`, for `task_create_exec()` and `execve`, loads an ELF: `ET_EXEC` where it was
+linked, `ET_DYN` (a pie) at `0x555555554000`. With `PT_INTERP`, the interpreter (`ld.so`) is loaded too, in an mmap area
+of its size, and the task starts at its entry. `AT_BASE` says where it is, `AT_ENTRY` and
+`AT_PHDR` still describe the program. `ld.so` maps the libraries itself, through file mmap.
+Each `PT_LOAD` becomes a vma with its `p_flags`, and its file part is copied in. Pages come
 zeroed, so bss needs nothing.
 
 The stack follows the SysV ABI, what glibc's `_start` expects: `argc`, `argv`, `envp` and

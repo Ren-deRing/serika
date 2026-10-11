@@ -12,10 +12,11 @@ BINS := check
 # each bin twice: static at a fixed address, and static-pie
 EXEC := $(BINS:%=$(INITRD_DIR)/bin/%) $(BINS:%=$(INITRD_DIR)/bin/%-pie)
 
-# static glibc from the host (glibc-static)
+# against the host's shared glibc: ld.so and the libraries go in /lib64
 GLIBC_CC   := clang
 GLIBC_BINS := hello files signals fork
-EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%)
+GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6
+EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 
 LIB_OBJS     := $(LIB:%=$(UOBJ_DIR)/%.o)
 LIB_PIE_OBJS := $(LIB:%=$(UOBJ_DIR)/pie/%.o)
@@ -38,7 +39,12 @@ $(UOBJ_DIR)/pie/%.o: %
 $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
 	@echo "GLIBC : $@"
-	@$(GLIBC_CC) -static -O2 -Wall -Wextra $< -o $@ -lm
+	@$(GLIBC_CC) -O2 -Wall -Wextra $< -o $@ -lm
+
+$(INITRD_DIR)/lib64/%: /lib64/%
+	@mkdir -p $(dir $@)
+	@echo "CP    : $@"
+	@cp -L $< $@
 
 $(INITRD_DIR)/bin/%-pie: $(UOBJ_DIR)/pie/bin/%.c.o $(LIB_PIE_OBJS)
 	@mkdir -p $(dir $@)

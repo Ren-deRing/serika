@@ -79,6 +79,7 @@ struct files *files_create(void); /* 0, 1 and 2 on the console */
 void files_get(struct files *files);
 void files_put(struct files *files);
 struct files *files_copy(struct files *old);
+struct file *fd_get(long fd); /* the current task's, referenced. vfs_close() when done */
 void files_close_on_exec(struct files *files);
 
 /* cwd is "/" until there is one: a relative path is from the root */

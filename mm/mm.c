@@ -6,6 +6,7 @@
 #include <serika/pmap.h>
 #include <serika/slab.h>
 #include <serika/string.h>
+#include <serika/vfs.h>
 
 RB_GENERATE(vma_tree, vma, node, vma_cmp);
 
@@ -21,6 +22,19 @@ static void frame_get(uintptr_t phys) {
 /* the last mapping frees it */
 static void frame_put(uintptr_t phys) {
     if (__atomic_sub_fetch(&frame(phys)->refs, 1, 4) == 0) free_pages((void *)phys, 0); /* __ATOMIC_ACQ_REL */
+}
+
+/* a piece of v: same rights, same file at the matching offset, one more reference on it */
+static struct vma vma_piece(const struct vma *v, uintptr_t start, uintptr_t end) {
+    if (v->file) fget(v->file);
+
+    return (struct vma){ .start = start, .end = end, .prot = v->prot, .file = v->file, .off = v->off + (start - v->start) };
+}
+
+/* out of the tree already */
+static void vma_free(struct vma *v) {
+    if (v->file) vfs_close(v->file);
+    kfree(v);
 }
 
 /* a pte for a vma's prot. PROT_NONE stays the kernel's */
@@ -65,7 +79,7 @@ void mm_put(struct mm *mm) {
         }
 
         RB_REMOVE(vma_tree, &mm->vmas, vma);
-        kfree(vma);
+        vma_free(vma);
     }
 
     pmap_destroy(mm->pmap);
@@ -136,6 +150,17 @@ static uintptr_t vma_page(struct mm *mm, struct vma *vma, uintptr_t page, bool w
     memset((void *)P2V(phys), 0, PAGE_SIZE);
     frame(phys)->refs = 1;
 
+    /* a private copy of the file's page. past its end it stays zero. mm->lock, then the inode's */
+    if (vma->file) {
+        uint64_t pos = vma->off + (page - vma->start);
+
+        if (kernel_read(vma->file, (void *)P2V(phys), PAGE_SIZE, &pos) < 0) {
+            frame(phys)->refs = 0;
+            free_pages((void *)phys, 0);
+            return 0;
+        }
+    }
+
     if (pmap_map(mm->pmap, page, phys, PAGE_SIZE, user_rights(vma->prot)) != 0) {
         frame(phys)->refs = 0;
         free_pages((void *)phys, 0);
@@ -154,9 +179,7 @@ int mm_map(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
     struct vma *vma = kmalloc(sizeof(struct vma));
     if (!vma) return -ENOMEM;
 
-    vma->start = addr;
-    vma->end   = addr + size;
-    vma->prot  = prot;
+    *vma = (struct vma){ .start = addr, .end = addr + size, .prot = prot };
 
     mutex_lock(&mm->lock);
 
@@ -299,7 +322,7 @@ int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
 
     struct vma *vma = vma_find(mm, addr);
     if (vma->start < addr) {
-        *head = (struct vma){ .start = addr, .end = vma->end, .prot = vma->prot };
+        *head = vma_piece(vma, addr, vma->end);
         vma->end = addr;
         RB_INSERT(vma_tree, &mm->vmas, head);
         head = NULL;
@@ -307,7 +330,7 @@ int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
 
     vma = vma_find(mm, end - 1);
     if (vma->end > end) {
-        *tail = (struct vma){ .start = end, .end = vma->end, .prot = vma->prot };
+        *tail = vma_piece(vma, end, vma->end);
         vma->end = end;
         RB_INSERT(vma_tree, &mm->vmas, tail);
         tail = NULL;
@@ -328,36 +351,72 @@ int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
     return 0;
 }
 
-/* anonymous, below the last one. the address or -errno */
-long mm_mmap(struct mm *mm, size_t size, uint32_t prot) {
+static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end);
+
+/* below the last one, or at addr with MAP_FIXED, replacing what was there. the address or -errno.
+   file: MAP_PRIVATE of it from off, which takes its own reference */
+long mm_mmap(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot, uint32_t flags, struct file *file, uint64_t off) {
+    bool fixed = flags & (MAP_FIXED | MAP_FIXED_NOREPLACE);
+
     if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -EINVAL;
-    if (size == 0) return -EINVAL;
+    if (size == 0 || (off & (PAGE_SIZE - 1))) return -EINVAL;
 
     size = ALIGN_UP(size, PAGE_SIZE);
     if (size == 0) return -ENOMEM;
 
+    if (fixed && ((addr & (PAGE_SIZE - 1)) || addr + size < addr || addr + size > USER_SPACE_END)) return -EINVAL;
+
     struct vma *vma = kmalloc(sizeof(struct vma));
     if (!vma) return -ENOMEM;
 
+    long ret = 0;
+
     mutex_lock(&mm->lock);
 
-    uintptr_t addr = mm->mmap_next - size;
-    bool fits = size <= mm->mmap_next && addr >= mm->brk_end && !vma_overlaps(mm, addr, mm->mmap_next);
+    if (fixed) {
+        if (vma_overlaps(mm, addr, addr + size)) {
+            if (flags & MAP_FIXED_NOREPLACE) ret = -EEXIST;
+            else                             ret = unmap_range(mm, addr, addr + size);
+        }
+    } else {
+        addr = mm->mmap_next - size;
 
-    if (fits) {
-        *vma = (struct vma){ .start = addr, .end = mm->mmap_next, .prot = prot };
+        if (size > mm->mmap_next || addr < mm->brk_end || vma_overlaps(mm, addr, mm->mmap_next)) ret = -ENOMEM;
+        else mm->mmap_next = addr;
+    }
+
+    if (ret == 0) {
+        if (file) fget(file);
+
+        *vma = (struct vma){ .start = addr, .end = addr + size, .prot = prot, .file = file, .off = off };
         RB_INSERT(vma_tree, &mm->vmas, vma);
-        mm->mmap_next = addr;
     }
 
     mutex_unlock(&mm->lock);
 
-    if (!fits) {
+    if (ret != 0) {
         kfree(vma);
-        return -ENOMEM;
+        return ret;
     }
 
     return (long)addr;
+}
+
+/* the next mmap area, taken with no vma: the caller maps into it. exec puts ld.so there */
+uintptr_t mm_take_area(struct mm *mm, size_t size) {
+    uintptr_t addr = 0;
+
+    size = ALIGN_UP(size, PAGE_SIZE);
+
+    mutex_lock(&mm->lock);
+
+    if (size && size <= mm->mmap_next && mm->mmap_next - size >= mm->brk_end) {
+        addr = mm->mmap_next - size;
+        mm->mmap_next = addr;
+    }
+
+    mutex_unlock(&mm->lock);
+    return addr;
 }
 
 void mm_set_brk(struct mm *mm, uintptr_t start) {
@@ -377,17 +436,18 @@ static void vma_cut(struct mm *mm, uintptr_t start, uintptr_t end, struct vma **
         struct vma *next = RB_NEXT(vma_tree, &mm->vmas, vma);
 
         if (vma->start < start && vma->end > end) {
-            **spare = (struct vma){ .start = end, .end = vma->end, .prot = vma->prot };
+            **spare = vma_piece(vma, end, vma->end);
             vma->end = start;
             RB_INSERT(vma_tree, &mm->vmas, *spare);
             *spare = NULL;
         } else if (vma->start < start) {
             vma->end = start;
         } else if (vma->end > end) {
+            vma->off  += end - vma->start;
             vma->start = end; /* still between its neighbours: none of them overlap it */
         } else {
             RB_REMOVE(vma_tree, &mm->vmas, vma);
-            kfree(vma);
+            vma_free(vma);
         }
 
         vma = next;
@@ -512,7 +572,7 @@ struct mm *mm_fork(struct mm *old) {
             break;
         }
 
-        *copy = (struct vma){ .start = vma->start, .end = vma->end, .prot = vma->prot };
+        *copy = vma_piece(vma, vma->start, vma->end);
         RB_INSERT(vma_tree, &mm->vmas, copy);
 
         /* both sides read-only: the first write to it copies */
