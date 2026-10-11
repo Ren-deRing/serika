@@ -4,6 +4,7 @@
 #include <serika/cpu.h>
 #include <serika/intc.h>
 #include <serika/panic.h>
+#include <serika/pmap.h>
 #include <serika/preempt.h>
 
 #include <asm/arch.h>
@@ -218,6 +219,9 @@ void __schedule(bool preempt) {
         /* the count follows the task, we may resume on another cpu */
         prev->saved_preempt_count = preempt_count();
         preempt_count_set(next->saved_preempt_count);
+
+        /* shootdowns find this cpu by the pmap it is on */
+        if (prev->pmap != next->pmap) pmap_switch(prev->pmap, next->pmap);
 
         switch_to(prev, next);
     }

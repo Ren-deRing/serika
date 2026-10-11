@@ -42,3 +42,11 @@ bool test_exec() {
     TEST_ASSERT(task_create_exec("/bin", NULL, NULL, 0, &t) == -EACCES);
     return true;
 }
+
+bool test_exec_glibc() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/hello", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

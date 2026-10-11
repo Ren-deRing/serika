@@ -43,6 +43,7 @@
 #define PMAP_PM_ROOT_VIRT_OFFSET         0x00000
 #define PMAP_PM_ROOT_PHYS_OFFSET         0x00008
 #define PMAP_LOCK_OFFSET                 0x00010
+#define PMAP_CPUS_OFFSET                 0x00020
 #define ARCH_TASK_RSP_OFFSET             0x00000
 #define ARCH_TASK_FS_BASE_OFFSET         0x00008
 #define ARCH_TASK_XSAVES_AREA_OFFSET     0x00010

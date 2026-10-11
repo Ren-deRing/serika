@@ -12,6 +12,11 @@ BINS := check
 # each bin twice: static at a fixed address, and static-pie
 EXEC := $(BINS:%=$(INITRD_DIR)/bin/%) $(BINS:%=$(INITRD_DIR)/bin/%-pie)
 
+# static glibc from the host (glibc-static)
+GLIBC_CC   := clang
+GLIBC_BINS := hello
+EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%)
+
 LIB_OBJS     := $(LIB:%=$(UOBJ_DIR)/%.o)
 LIB_PIE_OBJS := $(LIB:%=$(UOBJ_DIR)/pie/%.o)
 
@@ -29,6 +34,11 @@ $(UOBJ_DIR)/pie/%.o: %
 	@mkdir -p $(dir $@)
 	@echo "UCC   : $< (pie)"
 	@$(UCC) $(UCFLAGS) -fPIE -c $< -o $@
+
+$(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
+	@mkdir -p $(dir $@)
+	@echo "GLIBC : $@"
+	@$(GLIBC_CC) -static -O2 -Wall -Wextra $< -o $@
 
 $(INITRD_DIR)/bin/%-pie: $(UOBJ_DIR)/pie/bin/%.c.o $(LIB_PIE_OBJS)
 	@mkdir -p $(dir $@)

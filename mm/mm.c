@@ -1,4 +1,5 @@
 #include <serika/buddy.h>
+#include <serika/cpu.h>
 #include <serika/errno.h>
 #include <serika/mm.h>
 #include <serika/page.h>
@@ -21,6 +22,9 @@ struct mm *mm_create(void) {
     RB_INIT(&mm->vmas);
     spin_lock_init(&mm->lock);
     mm->users = 1;
+
+    mm->brk_start = mm->brk = mm->brk_end = 0;
+    mm->mmap_next = MMAP_TOP;
 
     return mm;
 }
@@ -135,15 +139,15 @@ int mm_fault(struct mm *mm, uintptr_t addr, uint32_t access) {
     return ret;
 }
 
-/* ignores prot, for loading code into read-only vmas */
-int mm_copy_to(struct mm *mm, uintptr_t addr, const void *src, size_t size) {
-    const uint8_t *from = src;
+/* need 0: prot is not checked, for loading code into read-only vmas */
+static int mm_access(struct mm *mm, uintptr_t addr, void *buf, size_t size, bool to_mm, uint32_t need) {
+    uint8_t *kbuf = buf;
 
     uint64_t f = spin_lock_irqsave(&mm->lock);
 
     while (size) {
         struct vma *vma = vma_find(mm, addr);
-        if (!vma) {
+        if (!vma || (need & ~vma->prot)) {
             spin_unlock_irqrestore(&mm->lock, f);
             return -EFAULT;
         }
@@ -158,13 +162,166 @@ int mm_copy_to(struct mm *mm, uintptr_t addr, const void *src, size_t size) {
         size_t n   = PAGE_SIZE - off;
         if (n > size) n = size;
 
-        memcpy((void *)P2V(phys + off), from, n);
+        if (to_mm) memcpy((void *)P2V(phys + off), kbuf, n);
+        else       memcpy(kbuf, (void *)P2V(phys + off), n);
 
         addr += n;
-        from += n;
+        kbuf += n;
         size -= n;
     }
 
     spin_unlock_irqrestore(&mm->lock, f);
     return 0;
+}
+
+int mm_copy_to(struct mm *mm, uintptr_t addr, const void *src, size_t size) {
+    return mm_access(mm, addr, (void *)src, size, true, 0);
+}
+
+int copy_to_user(uintptr_t to, const void *from, size_t size) {
+    return mm_access(current_task()->mm, to, (void *)from, size, true, PROT_WRITE);
+}
+
+int copy_from_user(void *to, uintptr_t from, size_t size) {
+    return mm_access(current_task()->mm, from, to, size, false, PROT_READ);
+}
+
+/* the range must be mapped. */
+int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot) {
+    if (addr & (PAGE_SIZE - 1)) return -EINVAL;
+    if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -EINVAL;
+
+    size = ALIGN_UP(size, PAGE_SIZE);
+    if (size == 0) return 0;
+
+    uintptr_t end = addr + size;
+    if (end < addr || end > USER_SPACE_END) return -ENOMEM;
+
+    struct vma *head = kmalloc(sizeof(struct vma));
+    struct vma *tail = kmalloc(sizeof(struct vma));
+
+    if (!head || !tail) {
+        kfree(head);
+        kfree(tail);
+        return -ENOMEM;
+    }
+
+    uint64_t f = spin_lock_irqsave(&mm->lock);
+
+    for (uintptr_t a = addr; a < end;) {
+        struct vma *vma = vma_find(mm, a);
+        if (!vma) {
+            spin_unlock_irqrestore(&mm->lock, f);
+            kfree(head);
+            kfree(tail);
+            return -ENOMEM;
+        }
+
+        a = vma->end;
+    }
+
+    struct vma *vma = vma_find(mm, addr);
+    if (vma->start < addr) {
+        *head = (struct vma){ .start = addr, .end = vma->end, .prot = vma->prot };
+        vma->end = addr;
+        RB_INSERT(vma_tree, &mm->vmas, head);
+        head = NULL;
+    }
+
+    vma = vma_find(mm, end - 1);
+    if (vma->end > end) {
+        *tail = (struct vma){ .start = end, .end = vma->end, .prot = vma->prot };
+        vma->end = end;
+        RB_INSERT(vma_tree, &mm->vmas, tail);
+        tail = NULL;
+    }
+
+    for (uintptr_t a = addr; a < end;) {
+        vma = vma_find(mm, a);
+        vma->prot = prot;
+        a = vma->end;
+    }
+
+    bool changed = pmap_protect(mm->pmap, addr, size, prot | PROT_USER);
+
+    spin_unlock_irqrestore(&mm->lock, f);
+
+    if (changed) pmap_shootdown(mm->pmap, addr, size);
+
+    kfree(head);
+    kfree(tail);
+    return 0;
+}
+
+/* anonymous, below the last one. the address or -errno */
+long mm_mmap(struct mm *mm, size_t size, uint32_t prot) {
+    if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -EINVAL;
+    if (size == 0) return -EINVAL;
+
+    size = ALIGN_UP(size, PAGE_SIZE);
+    if (size == 0) return -ENOMEM;
+
+    struct vma *vma = kmalloc(sizeof(struct vma));
+    if (!vma) return -ENOMEM;
+
+    uint64_t f = spin_lock_irqsave(&mm->lock);
+
+    uintptr_t addr = mm->mmap_next - size;
+
+    if (size > mm->mmap_next || addr < mm->brk_end || vma_overlaps(mm, addr, mm->mmap_next)) {
+        spin_unlock_irqrestore(&mm->lock, f);
+        kfree(vma);
+        return -ENOMEM;
+    }
+
+    *vma = (struct vma){ .start = addr, .end = mm->mmap_next, .prot = prot };
+    RB_INSERT(vma_tree, &mm->vmas, vma);
+    mm->mmap_next = addr;
+
+    spin_unlock_irqrestore(&mm->lock, f);
+    return (long)addr;
+}
+
+void mm_set_brk(struct mm *mm, uintptr_t start) {
+    uint64_t f = spin_lock_irqsave(&mm->lock);
+    mm->brk_start = mm->brk = mm->brk_end = ALIGN_UP(start, PAGE_SIZE);
+    spin_unlock_irqrestore(&mm->lock, f);
+}
+
+uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
+    uint64_t f = spin_lock_irqsave(&mm->lock);
+
+    uintptr_t old_end = ALIGN_UP(mm->brk, PAGE_SIZE);
+    uintptr_t new_end = ALIGN_UP(brk, PAGE_SIZE);
+
+    if (brk < mm->brk_start || new_end < brk) goto out;
+
+    if (new_end > mm->brk_end) {
+        if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) goto out;
+
+        if (mm->brk_end > mm->brk_start) {
+            vma_find(mm, mm->brk_end - 1)->end = new_end;
+        } else {
+            struct vma *heap = kmalloc(sizeof(struct vma));
+            if (!heap) goto out;
+
+            *heap = (struct vma){ .start = mm->brk_start, .end = new_end, .prot = PROT_READ | PROT_WRITE };
+            RB_INSERT(vma_tree, &mm->vmas, heap);
+        }
+
+        mm->brk_end = new_end;
+    } else {
+        /* the vma and its frames stay. zeroed: malloc trusts memory a growing break gives to be zero */
+        for (uintptr_t va = new_end; va < old_end; va += PAGE_SIZE) {
+            uintptr_t phys = pmap_extract(mm->pmap, va);
+            if (phys) memset((void *)P2V(phys), 0, PAGE_SIZE);
+        }
+    }
+
+    mm->brk = brk;
+
+out:
+    brk = mm->brk;
+    spin_unlock_irqrestore(&mm->lock, f);
+    return brk;
 }

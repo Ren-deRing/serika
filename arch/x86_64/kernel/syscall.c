@@ -1,6 +1,8 @@
 #include <serika/arch.h>
 #include <serika/compiler.h>
 #include <serika/cpu.h>
+#include <serika/errno.h>
+#include <serika/mm.h>
 #include <serika/sched.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
@@ -46,4 +48,30 @@ notrace void arch_syscall(struct trapframe *tf) {
     arch_irq_disable();
 
     if (curcpu->rq.need_resched) schedule();
+}
+
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+
+long sys_arch_prctl(long code, long addr) {
+    struct task *curr = current_task();
+
+    if (code == ARCH_SET_FS) {
+        if ((uint64_t)addr >= USER_SPACE_END) return -EPERM;
+
+        interrupt_status_t flags = arch_irq_save();
+        asm volatile ("wrfsbase %0" :: "r"(addr) : "memory");
+        curr->arch.fs_base = addr;
+        arch_irq_restore(flags);
+        return 0;
+    }
+
+    if (code == ARCH_GET_FS) {
+        /* user code may wrfsbase on its own */
+        uint64_t fs;
+        asm volatile ("rdfsbase %0" : "=r"(fs));
+        return copy_to_user(addr, &fs, sizeof(fs));
+    }
+
+    return -EINVAL;
 }

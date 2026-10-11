@@ -259,11 +259,17 @@ int task_create_exec(const char *path, const char *const argv[], const char *con
     /* static-pie has no interpreter: it relocates itself wherever it lands */
     uintptr_t bias = eh.e_type == ET_DYN ? ELF_ET_DYN_BASE : 0;
 
+    uintptr_t image_end = 0;
+
     for (int i = 0; i < eh.e_phnum; i++) {
         if (ph[i].p_type != PT_LOAD || ph[i].p_memsz == 0) continue;
 
         if ((err = load_segment(f, mm, &ph[i], bias, (void *)P2V(bounce))) != 0) goto out;
+
+        if (bias + ph[i].p_vaddr + ph[i].p_memsz > image_end) image_end = bias + ph[i].p_vaddr + ph[i].p_memsz;
     }
+
+    mm_set_brk(mm, image_end);
 
     /* a segment in the stack's range fails here */
     if ((err = mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE)) != 0) {

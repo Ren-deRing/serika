@@ -114,13 +114,9 @@ before moving a task.
 
 ## Lock order
 
-`tasklist_lock`, then `wait_queue` lock, then rq lock, then the buddy and slab locks. Never the other way: no code
-takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
+`tasklist_lock`, then `wait_queue` lock, then rq lock, then the buddy and slab locks. Never the
+other way: no code takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
 lock before it does anything else. `task_free()` calls both allocators, but only after that.
 
-`mm->lock`, then the pmap lock, then the buddy and slab locks. A page fault takes `mm->lock`
-with irq on and nothing else held, like a system call.
-
-Threads share one `mm` (`task_create_thread()`, `mm_get()`), and the last `task_free()` drops
-it. Two threads faulting on the same page serialize on `mm->lock`. The second finds it mapped
-and returns. Pages are only added, never removed, so no other cpu needs a TLB flush yet.
+`mm->lock` and the pmap lock are not part of this chain. See [docs/mm/mm.md](../mm/mm.md).
+A `mutex` may sleep, so it is never taken under any of these locks.

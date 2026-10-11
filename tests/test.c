@@ -29,6 +29,8 @@ static struct test tests[] = {
     { "user task",   test_user_task },
     { "user fault",  test_user_fault },
     { "user thread", test_user_thread },
+    { "tlb storm",   test_tlb_storm },
+    { "tlb mprotect", test_tlb_mprotect },
     { "wait sleep",  test_wait_sleep },
     { "wait pingpong", test_wait_pingpong },
     { "wait child",  test_wait_child },
@@ -37,6 +39,7 @@ static struct test tests[] = {
     { "vfs basic",   test_vfs_basic },
     { "vfs initrd",  test_vfs_initrd },
     { "exec",        test_exec },
+    { "exec glibc",  test_exec_glibc },
 };
 
 void test_run_all() {

@@ -67,6 +67,8 @@ struct pmap *pmap_create(void) {
            256 * sizeof(pml4e_t));
     spin_unlock_irqrestore(&g_kernel_pmap.lock, f);
 
+    memset(pmap->cpus, 0, sizeof(pmap->cpus));
+
     pmap->pm_root_phys = pml4_phys;
     pmap->pm_root_virt = pml4_virt;
 
@@ -369,6 +371,46 @@ uintptr_t pmap_extract(struct pmap *pmap, uintptr_t va) {
     return pa;
 }
 
+/* present 4KiB pages only. PROT_USER off, or no access bit, makes a page the kernel's. true if one changed */
+bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags) {
+    if (!pmap || size == 0) return false;
+    if ((virt & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1))) return false;
+    if (virt + size < virt) return false;
+
+    uint64_t f = spin_lock_irqsave(&pmap->lock);
+
+    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
+    bool changed = false;
+
+    for (uintptr_t va = virt; va < virt + size; va += PAGE_SIZE) {
+        if (!(pml4[PML4_INDEX(va)] & PTE_PRESENT)) continue;
+        pdpte_t *pdpt = (pdpte_t *)P2V(pml4[PML4_INDEX(va)] & PTE_ADDR_MASK);
+
+        if (!(pdpt[PDPT_INDEX(va)] & PTE_PRESENT) || (pdpt[PDPT_INDEX(va)] & PDPTE_PS)) continue;
+        pde_t *pd = (pde_t *)P2V(pdpt[PDPT_INDEX(va)] & PTE_ADDR_MASK);
+
+        if (!(pd[PD_INDEX(va)] & PTE_PRESENT) || (pd[PD_INDEX(va)] & PDE_PS)) continue;
+        pte_t *pt = (pte_t *)P2V(pd[PD_INDEX(va)] & PTE_ADDR_MASK);
+
+        pte_t pte = pt[PT_INDEX(va)];
+        if (!(pte & PTE_PRESENT)) continue;
+
+        pte &= ~(PTE_WRITABLE | PTE_USER | PTE_NX);
+
+        if (flags & PROT_WRITE) pte |= PTE_WRITABLE;
+        if ((flags & PROT_USER) && (flags & (PROT_READ | PROT_WRITE | PROT_EXEC))) pte |= PTE_USER;
+        if (!(flags & PROT_EXEC)) pte |= PTE_NX;
+
+        if (pt[PT_INDEX(va)] != pte) {
+            pt[PT_INDEX(va)] = pte;
+            changed = true;
+        }
+    }
+
+    spin_unlock_irqrestore(&pmap->lock, f);
+    return changed;
+}
+
 void pmap_destroy(struct pmap *pmap) {
     if (!pmap || pmap == pmap_kernel()) return;
     if ((read_cr3() & PTE_ADDR_MASK) == pmap->pm_root_phys) return;
@@ -423,6 +465,9 @@ int pmap_init(void) {
     spin_lock_init(&g_kernel_pmap.lock);
     g_kernel_pmap.pm_root_phys = pml4_phys;
     g_kernel_pmap.pm_root_virt = pml4_virt;
+
+    extern void tlb_init(void);
+    tlb_init();
 
     return 0;
 }
