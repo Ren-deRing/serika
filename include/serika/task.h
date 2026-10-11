@@ -9,8 +9,9 @@
 
 #define TASK_KSTACK_SIZE (1024 * 16)
 
-#define USER_STACK_TOP 0x7ffffffff000ULL
-#define USER_CODE_BASE 0x100000ULL
+#define USER_STACK_TOP  0x7ffffffff000ULL
+#define USER_STACK_SIZE (1024 * 1024)
+#define USER_CODE_BASE  0x100000ULL
 
 typedef void (*task_entry_t)(void);
 
@@ -38,7 +39,8 @@ struct task {
     struct arch_task  arch;
     /* ============== */
 
-    struct pmap      *pmap;
+    struct pmap      *pmap;          /* mm->pmap, or the kernel's */
+    struct mm        *mm;            /* NULL for kthreads */
 
     struct task      *parent;
 

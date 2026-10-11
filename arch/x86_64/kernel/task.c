@@ -78,6 +78,8 @@ int arch_xsaves_init(struct task *task) {
     return 0;
 }
 
+/* kgs is 0 if the last task here entered from user and got switched out in the kernel */
 void arch_user_gs_init(void) {
+    wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)this_cpu_read(self));
     wrmsr(IA32_GS_BASE, 0);
 }

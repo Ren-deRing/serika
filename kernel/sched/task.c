@@ -3,6 +3,7 @@
 #include <serika/compiler.h>
 #include <serika/cpu.h>
 #include <serika/errno.h>
+#include <serika/mm.h>
 #include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/pmap.h>
@@ -55,28 +56,22 @@ struct task *task_create(task_entry_t entry, int nice) {
 
 /* not runnable until sched_add_task() */
 struct task *task_create_user(const void *code, size_t size, int nice) {
-    if (size > PAGE_SIZE) return NULL;
-
     struct task *task = task_alloc((task_entry_t)USER_CODE_BASE, nice);
     if (!task) return NULL;
 
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
-    struct pmap *pmap = pmap_create();
-    uintptr_t code_phys = (uintptr_t)alloc_pages(0);
-    uintptr_t stack_phys = (uintptr_t)alloc_pages(0);
+    struct mm *mm = mm_create();
     uintptr_t kstack_phys = (uintptr_t)alloc_pages(korder);
 
-    if (!pmap || !code_phys || !stack_phys || !kstack_phys) goto fail;
+    if (!mm || !kstack_phys) goto fail;
 
-    memset((void *)P2V(code_phys), 0, PAGE_SIZE);
-    memcpy((void *)P2V(code_phys), code, size);
-    memset((void *)P2V(stack_phys), 0, PAGE_SIZE);
+    if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
+    if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
+    if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
 
-    if (pmap_map(pmap, USER_CODE_BASE, code_phys, PAGE_SIZE, PROT_READ | PROT_EXEC | PROT_USER) != 0) goto fail;
-    if (pmap_map(pmap, USER_STACK_TOP - PAGE_SIZE, stack_phys, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_USER) != 0) goto fail;
-
-    task->pmap = pmap;
+    task->mm = mm;
+    task->pmap = mm->pmap;
     task->parent = current_task(); /* creator reaps */
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
@@ -86,9 +81,7 @@ struct task *task_create_user(const void *code, size_t size, int nice) {
     return task;
 
 fail:
-    if (pmap) pmap_destroy(pmap);
-    free_pages((void *)code_phys, 0);
-    free_pages((void *)stack_phys, 0);
+    if (mm) mm_put(mm);
     free_pages((void *)kstack_phys, korder);
     kfree(task);
     return NULL;
@@ -107,11 +100,7 @@ struct task *task_create_boot(void) {
 }
 
 void task_free(struct task *task) {
-    if (task->pmap != pmap_kernel()) {
-        free_pages((void *)pmap_extract(task->pmap, USER_CODE_BASE), 0);
-        free_pages((void *)pmap_extract(task->pmap, USER_STACK_TOP - PAGE_SIZE), 0);
-        pmap_destroy(task->pmap);
-    }
+    if (task->mm) mm_put(task->mm);
 
     if (task->kstack) free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
 

@@ -94,3 +94,6 @@ before moving a task.
 `wait_queue` lock, then rq lock, then the buddy and slab locks. Never the other way: no code
 takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
 lock before it does anything else. `task_free()` calls both allocators, but only after that.
+
+`mm->lock`, then the pmap lock, then the buddy and slab locks. A page fault takes `mm->lock`
+with irq on and nothing else held, like a system call.

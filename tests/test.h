@@ -35,6 +35,8 @@ bool test_slab_multi();
 bool test_slab_stress();
 bool test_slab_state();
 
+bool test_mm_fault();
+
 bool test_tick_rate();
 
 bool test_sched_fair();
@@ -45,6 +47,7 @@ bool test_smp_spread();
 bool test_smp_balance();
 
 bool test_user_task();
+bool test_user_fault();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();

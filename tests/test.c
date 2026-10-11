@@ -19,6 +19,7 @@ static struct test tests[] = {
     { "slab multi",  test_slab_multi },
     { "slab stress", test_slab_stress },
     { "slab state",  test_slab_state },
+    { "mm fault",    test_mm_fault },
     { "tick rate",   test_tick_rate },
     { "sched fair",  test_sched_fair },
     { "sched nice",  test_sched_nice },
@@ -26,6 +27,7 @@ static struct test tests[] = {
     { "smp spread",  test_smp_spread },
     { "smp balance", test_smp_balance },
     { "user task",   test_user_task },
+    { "user fault",  test_user_fault },
     { "wait sleep",  test_wait_sleep },
     { "wait pingpong", test_wait_pingpong },
 };

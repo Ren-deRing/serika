@@ -1,8 +1,11 @@
 #include <serika/arch.h>
 #include <serika/cpu.h>
+#include <serika/errno.h>
+#include <serika/mm.h>
 #include <serika/panic.h>
 #include <serika/preempt.h>
 #include <serika/printk.h>
+#include <serika/task.h>
 
 #include <asm/trapframe.h>
 
@@ -64,6 +67,30 @@ notrace static void nmi_handler(struct trapframe *tf, void *data) {
     unhandled_exception(tf);
 }
 
+notrace static void page_fault_handler(struct trapframe *tf, void *data) {
+    (void)data;
+
+    uintptr_t addr;
+    asm volatile ("mov %%cr2, %0" : "=r"(addr));
+
+    /* kernel touches no user memory */
+    if (!(tf->error & PF_USER) || (tf->error & PF_RSVD)) unhandled_exception(tf);
+
+    uint32_t access = (tf->error & PF_WRITE) ? PROT_WRITE :
+                      (tf->error & PF_INSTR) ? PROT_EXEC : PROT_READ;
+
+    /* cr2 is read. user code ran with irq on, so do we */
+    arch_irq_enable();
+    int ret = mm_fault(current_task()->mm, addr, access);
+    arch_irq_disable();
+
+    if (ret != 0) {
+        printk("fault: task %lu killed -- %s at 0x%lx, rip 0x%lx\n", current_task()->id,
+               ret == -EFAULT ? "bad access" : "out of memory", addr, tf->rip);
+        task_exit(11); /* TODO: no signals yet */
+    }
+}
+
 void idt_set_descriptor(uint8_t vector, void* isr, uint8_t flags, uint8_t ist) {
     uintptr_t addr = (uintptr_t)isr;
     idt[vector].isr_low    = addr & 0xFFFF;
@@ -119,6 +146,7 @@ int init_idt() {
     }
 
     register_handler(2, nmi_handler, NULL);
+    register_handler(14, page_fault_handler, NULL);
 
     return 0;
 }
