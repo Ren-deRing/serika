@@ -2,6 +2,7 @@
 #include <serika/buddy.h>
 #include <serika/compiler.h>
 #include <serika/cpu.h>
+#include <serika/errno.h>
 #include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/pmap.h>
@@ -73,6 +74,7 @@ struct task *task_create_user(const void *code, size_t size, int nice) {
     if (pmap_map(pmap, USER_STACK_TOP - PAGE_SIZE, stack_phys, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_USER) != 0) goto fail;
 
     task->pmap = pmap;
+    task->parent = curcpu->rq.curr; /* the creator reaps it */
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
 
@@ -116,23 +118,37 @@ void task_free(struct task *task) {
 
 /* schedule() switched to us holding the rq lock, irq off */
 void task_start(void) {
-    spin_unlock(&curcpu->rq.lock);
+    finish_task_switch();
     arch_irq_enable();
 
     curcpu->rq.curr->entry();
-    task_exit();
+    task_exit(0);
 }
 
 /* iretq will enable irq */
 notrace void task_start_user(void) {
+    finish_task_switch();
     arch_user_gs_init();
-    spin_unlock(&curcpu->rq.lock);
 }
 
-void task_exit(void) {
+long task_wait(struct task *child, long *status) {
+    if (child->parent != curcpu->rq.curr) return -ECHILD;
+    if (__atomic_load_n(&child->state, 2) != TASK_ZOMBIE) return 0; /* __ATOMIC_ACQUIRE */
+
+    long id = child->id;
+    *status = child->exit_code;
+
+    task_free(child);
+    return id;
+}
+
+void task_exit(long code) {
     arch_irq_disable();
 
-    curcpu->rq.curr->state = TASK_DEAD;
+    struct task *curr = curcpu->rq.curr;
+
+    curr->exit_code = code;
+    curr->state = TASK_DEAD;
     schedule();
 
     panic("sched: dead task got scheduled -- how?");

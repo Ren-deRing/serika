@@ -8,6 +8,7 @@ struct intc_ops {
     void (*eoi)(void);
     uint32_t (*get_id)(void);
     void (*send_ipi)(uint32_t dest_apic_id, uint8_t vector);
+    void (*send_nmi_others)(void);
     void (*timer_stop)(void);
     void (*timer_deadline_init)(uint8_t vector); /* once per cpu */
     void (*timer_deadline)(uint64_t tsc);
@@ -30,4 +31,8 @@ static inline uint32_t intc_get_id(void) {
 
 static inline void intc_send_ipi(uint32_t dest_apic_id, uint8_t vector) {
     if (g_intc && g_intc->send_ipi) g_intc->send_ipi(dest_apic_id, vector);
+}
+
+static inline void intc_send_nmi_others(void) {
+    if (g_intc && g_intc->send_nmi_others) g_intc->send_nmi_others();
 }

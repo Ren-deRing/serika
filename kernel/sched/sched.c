@@ -182,12 +182,6 @@ void schedule() {
     struct task *prev = rq->curr;
     struct task *next;
 
-    /* prev of last switch died.*/
-    if (rq->dead) {
-        task_free(rq->dead);
-        rq->dead = NULL;
-    }
-
     rq->need_resched = false;
     update_curr(rq);
 
@@ -214,13 +208,38 @@ void schedule() {
 
     if (next != prev) switch_to(prev, next);
 
-    /*
-        whoever switched to us still holds the lock.
-        another cpu might have migrated the task.
-        new tasks never get here, task_start() unlocks for them.
-    */
-    spin_unlock(&curcpu->rq.lock);
+    /* new tasks never get here, task_start() / task_start_user() call it for them */
+    finish_task_switch();
     arch_irq_restore(flags);
+}
+
+/* TODO */
+void finish_task_switch(void) {
+    struct runqueue *rq = &curcpu->rq; /* another cpu might have migrated us */
+    struct task *dead = rq->dead;
+
+    rq->dead = NULL;
+    spin_unlock(&rq->lock);
+
+    if (!dead) return;
+
+    if (dead->parent) __atomic_store_n(&dead->state, TASK_ZOMBIE, 3); /* __ATOMIC_RELEASE. parent reaps */
+    else              task_free(dead);
+}
+
+bool sched_cpu_online(uint32_t cpu) {
+    return __atomic_load_n(&cpus[cpu].rq.online, 5); /* __ATOMIC_SEQ_CST */
+}
+
+/* locked read */
+uint32_t sched_nr_running(uint32_t cpu) {
+    struct runqueue *rq = &cpus[cpu].rq;
+
+    uint64_t flags = spin_lock_irqsave(&rq->lock);
+    uint32_t nr = rq->nr_running;
+    spin_unlock_irqrestore(&rq->lock, flags);
+
+    return nr;
 }
 
 uint32_t sched_nr_online(void) {

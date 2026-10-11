@@ -21,7 +21,7 @@ struct runqueue {
 
     struct task_tree tasks; /* curr is not in here */
     struct task *curr;
-    struct task *dead;      /* freed by next schedule() */
+    struct task *dead;      /* finish_task_switch() frees or zombifies it */
 
     uint64_t min_vruntime;
     uint64_t load;          /* sum of weights, curr included */
@@ -53,11 +53,14 @@ void dequeue_task(struct runqueue *rq, struct task *task);
 struct task *pick_next_task(struct runqueue *rq);
 
 void schedule();
+void finish_task_switch(void);
 
 void sched_init(void);
 void sched_tick(void);
 void sched_add_task(struct task *task);
 void sched_add_task_cpu(struct task *task, uint32_t cpu);
 uint32_t sched_nr_online(void);
+bool sched_cpu_online(uint32_t cpu);
+uint32_t sched_nr_running(uint32_t cpu);
 
 extern const uint32_t sched_prio_to_weight[40];

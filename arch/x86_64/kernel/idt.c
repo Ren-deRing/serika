@@ -1,4 +1,6 @@
 #include <serika/arch.h>
+#include <serika/cpu.h>
+#include <serika/panic.h>
 #include <serika/printk.h>
 
 #include <asm/trapframe.h>
@@ -11,10 +13,7 @@ static volatile idt_entry_t idt[256];
 static volatile idtr_t idtr;
 static struct isr_slot handlers[256];
 
-notrace void isr_handler(struct trapframe *tf) {
-    struct isr_slot *slot = &handlers[tf->vector];
-    if (slot->func) { slot->func(tf, slot->data); return; }
-
+notrace static void unhandled_exception(struct trapframe *tf) {
     printk("\nPANIC! [#%02lu] [E%lu]\n", tf->vector, tf->error);
     printk("  CS:RIP = 0x%04lx:0x%016lx\n", tf->cs, tf->rip);
     printk("  RAX:     0x%016lx  RBX: 0x%016lx\n", tf->rax, tf->rbx);
@@ -34,11 +33,25 @@ notrace void isr_handler(struct trapframe *tf) {
     }
 
     if (tf->vector != 3) {
-        printk("oh no, halting.\n");
-        for (;;) arch_halt();
+        panic("arch: unhandled exception.");
     }
 
     printk("don't worry! that was not a panic.\n\n");
+}
+
+notrace void isr_handler(struct trapframe *tf) {
+    struct isr_slot *slot = &handlers[tf->vector];
+    if (slot->func) { slot->func(tf, slot->data); return; }
+
+    unhandled_exception(tf);
+}
+
+notrace static void nmi_handler(struct trapframe *tf, void *data) {
+    (void)data;
+
+    if (arch_panicking()) arch_halt_forever();
+
+    unhandled_exception(tf);
 }
 
 void idt_set_descriptor(uint8_t vector, void* isr, uint8_t flags, uint8_t ist) {
@@ -60,7 +73,7 @@ void register_handler(uint8_t vector, handler_t handler, void *data) {
 int init_idt() {
     idt_set_descriptor(0,  isr0,  0x8E, 0);
 	idt_set_descriptor(1,  isr1,  0x8E, 0);
-	idt_set_descriptor(2,  isr2,  0x8E, 0);
+	idt_set_descriptor(2,  isr2,  0x8E, 2); // NMI IST
 	idt_set_descriptor(3,  isr3,  0x8E, 0);
 	idt_set_descriptor(4,  isr4,  0x8E, 0);
 	idt_set_descriptor(5,  isr5,  0x8E, 0);
@@ -94,6 +107,8 @@ int init_idt() {
     for (int i = 0; i < (255 - 31); i++) {
         idt_set_descriptor(i + 32, (void*)isr_stub_table[i], 0x8E, 0);
     }
+
+    register_handler(2, nmi_handler, NULL);
 
     return 0;
 }

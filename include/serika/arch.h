@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef uint64_t interrupt_status_t;
@@ -12,3 +13,5 @@ void arch_irq_enable(void);
 void arch_halt();
 void arch_pause();
 void arch_panic(void);
+bool arch_panicking(void);
+void arch_halt_forever(void) __attribute__((noreturn));

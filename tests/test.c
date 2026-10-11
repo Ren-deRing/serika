@@ -23,6 +23,7 @@ static struct test tests[] = {
     { "smp online",  test_smp_online },
     { "smp spread",  test_smp_spread },
     { "smp balance", test_smp_balance },
+    { "user task",   test_user_task },
 };
 
 void test_run_all() {

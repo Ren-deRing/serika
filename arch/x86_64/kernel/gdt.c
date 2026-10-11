@@ -65,6 +65,9 @@ int init_gdt() {
         // IST1 (for #DF)
         gdt[i].tss.ist[0] = (uintptr_t)gdt[i].df_stack + sizeof(gdt[i].df_stack);
 
+        // IST2 (for NMI)
+        gdt[i].tss.ist[1] = (uintptr_t)gdt[i].nmi_stack + sizeof(gdt[i].nmi_stack);
+
         // kstack
         gdt[i].tss.rsp[0] = (uintptr_t)gdt[i].kstack + sizeof(gdt[i].kstack);
 

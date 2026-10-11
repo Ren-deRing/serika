@@ -25,5 +25,5 @@ void start_ap(struct core* info) {
     sched_init();
     tick_init();
 
-    task_exit(); /* idle takes over */
+    task_exit(0); /* idle takes over */
 }

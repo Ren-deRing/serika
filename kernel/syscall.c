@@ -1,13 +1,9 @@
 #include <serika/errno.h>
-#include <serika/cpu.h>
-#include <serika/printk.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
 
 static long sys_exit(long code) {
-    printk("task %lu exited with code %ld\n", curcpu->rq.curr->id, code);
-
-    task_exit();
+    task_exit((code & 0xff) << 8); /* wait status: exit code in bits 15..8 */
     return 0;
 }
 

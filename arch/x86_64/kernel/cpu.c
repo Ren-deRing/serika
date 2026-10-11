@@ -18,8 +18,8 @@ static inline uint32_t get_apic_id() {
 void init_cpu_gs(struct cpu *cpu_ptr) {
     uint64_t addr = (uint64_t)cpu_ptr;
 
-    wrmsr(0xC0000101, addr); /* IA32_GS_BASE */
-    wrmsr(0xC0000102, addr); /* IA32_KERNEL_GS_BASE */
+    wrmsr(IA32_GS_BASE, addr);
+    wrmsr(IA32_KERNEL_GS_BASE, addr);
 }
 
 int enable_xsaves() {

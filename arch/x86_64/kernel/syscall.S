@@ -59,11 +59,14 @@ syscall_entry:
     addq $16, %rsp                     /* vector, error */
     popq %rcx                          /* rip */
 
-    /* canonical: bits 63..47 all equal bit 47. sign-extend and compare */
-    movq %rcx, %rax
-    shlq $16, %rax
-    sarq $16, %rax
-    cmpq %rax, %rcx
+    /*
+        bits 63..47 all equal bit 47. sign-extend and compare.
+        rax is the return value, r11 is clobbered by syscall anyway
+    */
+    movq %rcx, %r11
+    shlq $16, %r11
+    sarq $16, %r11
+    cmpq %r11, %rcx
     jne .Lbad_rip
 
     addq $8, %rsp                      /* cs */

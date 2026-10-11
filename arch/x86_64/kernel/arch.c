@@ -1,5 +1,6 @@
 #include <serika/arch.h>
 #include <serika/compiler.h>
+#include <serika/intc.h>
 
 notrace interrupt_status_t arch_irq_save(void) {
     interrupt_status_t flags;
@@ -27,11 +28,27 @@ notrace void arch_pause() {
     asm volatile ("pause");
 }
 
-void arch_panic(void) {
-    /* TODO: Halt all other CPUs via IPI before entering the panic loop. */
+static volatile bool panicking;
 
+bool arch_panicking(void) {
+    return panicking;
+}
+
+notrace void arch_halt_forever(void) {
+    for (;;) {
+        arch_irq_disable();
+        arch_halt();
+    }
+}
+
+void arch_panic(void) {
     arch_irq_disable();
-    for (;;) arch_halt();
+
+    /* first panic stops the others */
+    if (!__atomic_exchange_n(&panicking, true, 5)) /* __ATOMIC_SEQ_CST */
+        intc_send_nmi_others();
+
+    arch_halt_forever();
 }
 
 uint64_t rdmsr(uint32_t msr) {

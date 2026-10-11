@@ -75,9 +75,9 @@ bool test_smp_balance() {
 
     uint32_t min = ~0u, max = 0;
     for (uint32_t i = 0; i < MAX_CPUS; i++) {
-        if (!cpus[i].rq.online) continue;
+        if (!sched_cpu_online(i)) continue;
 
-        uint32_t nr = cpus[i].rq.nr_running;
+        uint32_t nr = sched_nr_running(i);
         if (nr < min) min = nr;
         if (nr > max) max = nr;
     }

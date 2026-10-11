@@ -19,6 +19,7 @@ enum task_state {
     TASK_RUNNABLE,
     TASK_SLEEPING,
     TASK_DEAD,
+    TASK_ZOMBIE,
 };
 
 struct task {
@@ -39,6 +40,8 @@ struct task {
 
     struct pmap      *pmap;
 
+    struct task      *parent;
+
     enum task_state state;
 
     int               nice;
@@ -49,6 +52,7 @@ struct task {
     uint64_t          prev_sum_exec; /* sum_exec when picked */
 
     bool              pinned;        /* never migrates to another cpu */
+    long              exit_code;     /* wait status, linux encoding */
 };
 
 void switch_to(struct task *prev, struct task *next);
@@ -60,4 +64,5 @@ struct task *task_create(task_entry_t entry, int nice);
 struct task *task_create_user(const void *code, size_t size, int nice);
 struct task *task_create_boot(void);
 void task_free(struct task *task);
-void task_exit(void);
+void task_exit(long code);
+long task_wait(struct task *child, long *status);

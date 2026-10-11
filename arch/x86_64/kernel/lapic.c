@@ -35,6 +35,15 @@ void lapic_send_ipi(uint32_t dest_apic_id, uint8_t vector) {
     wrmsr(IA32_X2APIC_ICR, ((uint64_t)dest_apic_id << 32) | vector);
 }
 
+#define ICR_DM_NMI          (0b100 << 8)
+#define ICR_DEST_ALLBUTSELF (0b11 << 18)
+
+void lapic_send_nmi_others(void) {
+    if ((rdmsr(IA32_APIC_BASE) & ((1ULL << 11) | (1ULL << 10))) != ((1ULL << 11) | (1ULL << 10))) return;
+
+    wrmsr(IA32_X2APIC_ICR, ICR_DM_NMI | ICR_DEST_ALLBUTSELF);
+}
+
 uint32_t x2apic_get_id(void) {
     return (uint32_t)rdmsr(IA32_X2APIC_ID);
 }
@@ -76,6 +85,7 @@ static struct intc_ops x2apic_ops = {
     .eoi = x2apic_eoi,
     .get_id = x2apic_get_id,
     .send_ipi = lapic_send_ipi,
+    .send_nmi_others = lapic_send_nmi_others,
 
     .timer_stop = lapic_timer_stop,
     .timer_deadline_init = lapic_timer_deadline_init,

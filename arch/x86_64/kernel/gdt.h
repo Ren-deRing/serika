@@ -42,5 +42,6 @@ typedef struct {
     gdtr_t      pointer;
     tss_entry_t tss;
     uint8_t df_stack[8192] __attribute__((aligned(16)));
+    uint8_t nmi_stack[4096] __attribute__((aligned(16)));
     uint8_t kstack[16384] __attribute__((aligned(16))); 
 } __attribute__((packed)) GDT;
