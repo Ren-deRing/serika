@@ -62,19 +62,26 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* the task takes mm on success. on failure the caller still owns it */
-static int task_init_user(struct task *task, struct mm *mm, uintptr_t user_stack) {
+/* not runnable until sched_add_task(). takes mm on success, the caller still owns it on failure */
+struct task *task_create_mm(struct mm *mm, uintptr_t entry, uintptr_t user_stack, int nice) {
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
+    struct task *task = task_alloc((task_entry_t)entry, nice);
+    if (!task) return NULL;
+
     uintptr_t kstack_phys = (uintptr_t)alloc_pages(korder);
-    if (!kstack_phys) return -1;
+    if (!kstack_phys) {
+        kfree(task);
+        return NULL;
+    }
 
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
 
     if (arch_task_init(task, user_stack) == -1) {
         free_pages((void *)kstack_phys, korder);
-        return -1;
+        kfree(task);
+        return NULL;
     }
 
     task->mm = mm;
@@ -86,28 +93,25 @@ static int task_init_user(struct task *task, struct mm *mm, uintptr_t user_stack
     list_add_tail(&task->sibling, &task->parent->children);
     spin_unlock_irqrestore(&tasklist_lock, f);
 
-    return 0;
+    return task;
 }
 
 /* not runnable until sched_add_task() */
 struct task *task_create_user(const void *code, size_t size, int nice) {
-    struct task *task = task_alloc((task_entry_t)USER_CODE_BASE, nice);
-    if (!task) return NULL;
-
     struct mm *mm = mm_create();
-    if (!mm) goto fail;
+    if (!mm) return NULL;
 
     if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
     if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
     if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
 
-    if (task_init_user(task, mm, USER_STACK_TOP) != 0) goto fail;
+    struct task *task = task_create_mm(mm, USER_CODE_BASE, USER_STACK_TOP, nice);
+    if (!task) goto fail;
 
     return task;
 
 fail:
-    if (mm) mm_put(mm);
-    kfree(task);
+    mm_put(mm);
     return NULL;
 }
 
@@ -115,16 +119,10 @@ fail:
 struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice) {
     if (!proc->mm) return NULL;
 
-    struct task *task = task_alloc((task_entry_t)entry, nice);
-    if (!task) return NULL;
-
     mm_get(proc->mm);
 
-    if (task_init_user(task, proc->mm, user_stack) != 0) {
-        mm_put(proc->mm);
-        kfree(task);
-        return NULL;
-    }
+    struct task *task = task_create_mm(proc->mm, entry, user_stack, nice);
+    if (!task) mm_put(proc->mm);
 
     return task;
 }

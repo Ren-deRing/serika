@@ -82,6 +82,16 @@ the rq lock of whoever switched to it, dropped in `finish_task_switch()`.
 System calls run with irq on after `syscall_entry`, like any task, and turn it off again
 before `sysret`.
 
+## Mutexes
+
+`struct mutex` sleeps on a `wait_queue` instead of spinning. Task context only: `mutex_lock()`
+calls `might_sleep()` before it tries, so a caller holding a spinlock or with irq off panics
+even when the mutex is free. Taking a mutex the task already holds, or unlocking one another
+task holds, panics.
+
+`mutex_unlock()` clears the owner before `wake_up()` walks the queue. A waiter that saw the
+mutex taken is already queued, so it is woken.
+
 ## Parents and children
 
 `tasklist_lock` protects `parent`, `children` and `sibling`, and the change to `TASK_ZOMBIE`.

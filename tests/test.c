@@ -33,6 +33,10 @@ static struct test tests[] = {
     { "wait pingpong", test_wait_pingpong },
     { "wait child",  test_wait_child },
     { "wait orphan", test_wait_orphan },
+    { "mutex",       test_mutex },
+    { "vfs basic",   test_vfs_basic },
+    { "vfs initrd",  test_vfs_initrd },
+    { "exec",        test_exec },
 };
 
 void test_run_all() {

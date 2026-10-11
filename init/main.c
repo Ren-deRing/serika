@@ -13,6 +13,7 @@
 #include <serika/sched.h>
 #include <serika/symbol.h>
 #include <serika/tick.h>
+#include <serika/vfs.h>
 
 #include <tests/test.h>
 
@@ -39,6 +40,9 @@ notrace void start_init(void) {
     smp_release_aps();
 
     printk("smp: %u cpus online\n", g_bootinfo.smp.total_cores);
+
+    vfs_init();
+    initramfs_unpack();
     
     test_run_all();
 

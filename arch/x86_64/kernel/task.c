@@ -72,8 +72,14 @@ int arch_xsaves_init(struct task *task) {
 
     memset(task->arch.xsaves_area, 0, curcpu->arch_cpu_data->xsave_size);
 
+    uint32_t *mxcsr = (uint32_t *)((uint8_t *)task->arch.xsaves_area + 24);
+    *mxcsr = 0x1f80;
+
+    uint64_t *xstate_bv = (uint64_t *)((uint8_t *)task->arch.xsaves_area + 512);
+    *xstate_bv = (1ULL << 1);
+
     uint64_t *xcomp_bv = (uint64_t *)((uint8_t *)task->arch.xsaves_area + 520); // 512 + 8
-    *xcomp_bv = (1ULL << 63); // compacted format
+    *xcomp_bv = (1ULL << 63) | (1ULL << 1); // compacted format. xstate_bv must be a subset
 
     return 0;
 }

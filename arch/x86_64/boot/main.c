@@ -24,7 +24,7 @@ static volatile struct limine_executable_address_request kaddr_req = { .id = LIM
 static volatile struct limine_hhdm_request hhdm_req = { .id = LIMINE_HHDM_REQUEST_ID, .revision = 0 };
 static volatile struct limine_mp_request smp_req = { .id = LIMINE_MP_REQUEST_ID, .revision = 0 };
 static volatile struct limine_rsdp_request rsdp_req = { .id = LIMINE_RSDP_REQUEST_ID, .revision = 0 };
-// static volatile struct limine_module_request module_req = { .id = LIMINE_MODULE_REQUEST_ID, .revision = 0 };
+static volatile struct limine_module_request module_req = { .id = LIMINE_MODULE_REQUEST_ID, .revision = 0 };
 
 mtype_t convert_memtype(uint64_t limine_type) {
     switch (limine_type) {
@@ -102,13 +102,13 @@ void boot_entry(void) {
     }
 
     /* Initrd */
-    // if (module_req.response && module_req.response->module_count > 0) {
-    //     struct limine_file *initrd_file = module_req.response->modules[0];
+    if (module_req.response && module_req.response->module_count > 0) {
+        struct limine_file *initrd_file = module_req.response->modules[0];
         
-    //     g_bootinfo.initrd.phys_base = (uintptr_t)initrd_file->address - hhdm_offset;
-    //     g_bootinfo.initrd.virt_base = (uintptr_t)initrd_file->address;
-    //     g_bootinfo.initrd.size      = initrd_file->size;
-    // }
+        g_bootinfo.initrd.phys_base = (uintptr_t)initrd_file->address - hhdm_offset;
+        g_bootinfo.initrd.virt_base = (uintptr_t)initrd_file->address;
+        g_bootinfo.initrd.size      = initrd_file->size;
+    }
 
     /* System Tables */
     g_bootinfo.rsdp_address = rsdp_address;

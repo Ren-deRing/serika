@@ -27,7 +27,7 @@ KOFFSETS_HEADER := $(BASE_DIR)/include/serika/offsets.h
 OFFSETS += include/serika/cpu.h cpu include/serika/task.h task include/serika/pmap.h pmap
 
 # Except for drivers.
-SUBDIRS := kernel init arch mm tests
+SUBDIRS := kernel init arch mm fs tests
 
 include drivers/Makefile
 
@@ -56,7 +56,7 @@ export CPPFLAGS := -I$(BASE_DIR) \
 export LDFLAGS  := $(ARCH_LDFLAGS) -nostdlib -static --gc-sections \
 				   -no-pie -z max-page-size=0x1000 -T $(BASE_DIR)/arch/$(ARCH)/kernel/linker.ld
 
-.PHONY: all clean $(SUBDIRS) run build setup
+.PHONY: all clean $(SUBDIRS) run build setup initrd
 
 all: setup_check $(BIN_DIR)/$(OUTPUT)
 
@@ -121,7 +121,11 @@ setup:
 	fi
 	touch $(SETUP_FLAG)
 
-build: all
+initrd:
+	@echo "MK    : user"
+	@$(MAKE) -C user
+
+build: all initrd
 	@rm -rf   $(IMAGE_ROOT)
 
 	@mkdir -p $(IMAGE_ROOT)/boot/limine
@@ -141,6 +145,10 @@ build: all
 	@# kernel
 	@echo "CP    : kernel"
 	@cp $(BIN_DIR)/$(OUTPUT) $(IMAGE_ROOT)/boot/
+
+	@# initrd
+	@echo "CP    : initrd"
+	@cp $(BUILD_DIR)/initrd.cpio $(IMAGE_ROOT)/boot/
 
 	@# limine EFIs
 	@echo "CP    : limine EFIs"

@@ -54,6 +54,7 @@ void kmap_init(void) {
 
         switch (r->type) {
             case MMAP_FRAMEBUFFER: flags |= PROT_WC; break;
+            case MMAP_KERNEL_AND_MODULES: flags = PROT_READ; break; /* initrd. the image is mapped above */
             case MMAP_FREE:
             case MMAP_ACPI_RECLAIMABLE:
             case MMAP_ACPI_NVS:
@@ -70,6 +71,7 @@ void kmap_init(void) {
     check_mapped("kernel bss end", (uintptr_t)__bss_end - 1);
     check_mapped("current stack", (uintptr_t)__builtin_frame_address(0));
     check_mapped("page tables", (uintptr_t)pmap->pm_root_virt);
+    if (g_bootinfo.initrd.size) check_mapped("initrd", P2V(g_bootinfo.initrd.phys_base));
 
     pmap_activate(pmap);
     flush_tlb_all(); /* drops */

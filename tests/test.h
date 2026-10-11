@@ -66,3 +66,9 @@ bool test_wait_sleep();
 bool test_wait_pingpong();
 bool test_wait_child();
 bool test_wait_orphan();
+
+bool test_mutex();
+
+bool test_vfs_basic();
+bool test_vfs_initrd();
+bool test_exec();
