@@ -323,49 +323,6 @@ void mm_set_brk(struct mm *mm, uintptr_t start) {
     mutex_unlock(&mm->map_mutex);
 }
 
-uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
-    mutex_lock(&mm->map_mutex);
-    uint64_t f = spin_lock_irqsave(&mm->lock);
-
-    uintptr_t old_end = ALIGN_UP(mm->brk, PAGE_SIZE);
-    uintptr_t new_end = ALIGN_UP(brk, PAGE_SIZE);
-
-    if (brk < mm->brk_start || new_end < brk) goto out;
-
-    if (new_end > mm->brk_end) {
-        if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) goto out;
-
-        /* the heap's last vma grows, unless munmap() took that end */
-        struct vma *heap = mm->brk_end > mm->brk_start ? vma_find(mm, mm->brk_end - 1) : NULL;
-
-        if (heap) {
-            heap->end = new_end;
-        } else {
-            heap = kmalloc(sizeof(struct vma));
-            if (!heap) goto out;
-
-            *heap = (struct vma){ .start = mm->brk_end, .end = new_end, .prot = PROT_READ | PROT_WRITE };
-            RB_INSERT(vma_tree, &mm->vmas, heap);
-        }
-
-        mm->brk_end = new_end;
-    } else {
-        /* the vma and its frames stay. zeroed: malloc trusts memory a growing break gives to be zero */
-        for (uintptr_t va = new_end; va < old_end; va += PAGE_SIZE) {
-            uintptr_t phys = pmap_extract(mm->pmap, va);
-            if (phys) memset((void *)P2V(phys), 0, PAGE_SIZE);
-        }
-    }
-
-    mm->brk = brk;
-
-out:
-    brk = mm->brk;
-    spin_unlock_irqrestore(&mm->lock, f);
-    mutex_unlock(&mm->map_mutex);
-    return brk;
-}
-
 /* mm lock held. vmas leave [start, end). one may split in two: *spare is used then */
 static void vma_cut(struct mm *mm, uintptr_t start, uintptr_t end, struct vma **spare) {
     struct vma key = { .start = start };
@@ -397,16 +354,8 @@ static void vma_cut(struct mm *mm, uintptr_t start, uintptr_t end, struct vma **
 /* frames freed per shootdown: one page of their addresses */
 #define UNMAP_BATCH (PAGE_SIZE / sizeof(uintptr_t))
 
-/* frames are freed only after every cpu dropped them. page tables stay until mm_put() */
-int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
-    if (addr & (PAGE_SIZE - 1)) return -EINVAL;
-
-    size = ALIGN_UP(size, PAGE_SIZE);
-    if (size == 0) return -EINVAL;
-
-    uintptr_t end = addr + size;
-    if (end < addr || end > USER_SPACE_END) return -EINVAL;
-
+/* map_mutex held. frames are freed only after every cpu dropped them. page tables stay until mm_put() */
+static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
     uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
     struct vma *spare = kmalloc(sizeof(struct vma));
 
@@ -417,8 +366,6 @@ int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
     }
 
     uintptr_t *frames = (uintptr_t *)P2V(frames_phys);
-
-    mutex_lock(&mm->map_mutex);
 
     uint64_t f = spin_lock_irqsave(&mm->lock);
     vma_cut(mm, addr, end, &spare);
@@ -437,9 +384,74 @@ int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
         for (size_t i = 0; i < count; i++) free_pages((void *)frames[i], 0);
     }
 
-    mutex_unlock(&mm->map_mutex);
-
     free_pages((void *)frames_phys, 0);
     kfree(spare);
     return 0;
+}
+
+int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
+    if (addr & (PAGE_SIZE - 1)) return -EINVAL;
+
+    size = ALIGN_UP(size, PAGE_SIZE);
+    if (size == 0) return -EINVAL;
+
+    uintptr_t end = addr + size;
+    if (end < addr || end > USER_SPACE_END) return -EINVAL;
+
+    mutex_lock(&mm->map_mutex);
+    int err = unmap_range(mm, addr, end);
+    mutex_unlock(&mm->map_mutex);
+
+    return err;
+}
+
+/* map_mutex held. the heap's last vma grows, unless munmap() took that end */
+static bool brk_grow(struct mm *mm, uintptr_t new_end) {
+    bool ok = false;
+
+    uint64_t f = spin_lock_irqsave(&mm->lock);
+
+    if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) goto out;
+
+    struct vma *heap = mm->brk_end > mm->brk_start ? vma_find(mm, mm->brk_end - 1) : NULL;
+
+    if (heap) {
+        heap->end = new_end;
+    } else {
+        heap = kmalloc(sizeof(struct vma));
+        if (!heap) goto out;
+
+        *heap = (struct vma){ .start = mm->brk_end, .end = new_end, .prot = PROT_READ | PROT_WRITE };
+        RB_INSERT(vma_tree, &mm->vmas, heap);
+    }
+
+    ok = true;
+
+out:
+    spin_unlock_irqrestore(&mm->lock, f);
+    return ok;
+}
+
+/* linux's: the new break, or the old one if it can't move */
+uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
+    mutex_lock(&mm->map_mutex);
+
+    uintptr_t new_end = ALIGN_UP(brk, PAGE_SIZE);
+
+    if (brk < mm->brk_start || new_end < brk) goto out;
+
+    if (new_end > mm->brk_end) {
+        if (!brk_grow(mm, new_end)) goto out;
+    } else if (new_end < mm->brk_end) {
+        /* given back. growing again faults in zeroed pages, which malloc counts on */
+        if (unmap_range(mm, new_end, mm->brk_end) != 0) goto out;
+    }
+
+    mm->brk_end = new_end;
+    mm->brk = brk;
+
+out:
+    brk = mm->brk;
+    mutex_unlock(&mm->map_mutex);
+    return brk;
 }

@@ -59,6 +59,10 @@ bool test_user_task() {
     return true;
 }
 
+static const uint8_t ud2_code[]  = { 0x0f, 0x0b };             /* ud2                     */
+static const uint8_t div0_code[] = { 0x31, 0xc9, 0xf7, 0xf1 }; /* xor %ecx, %ecx; div %ecx */
+static const uint8_t int3_code[] = { 0xcc };                   /* int3                    */
+
 bool test_user_fault() {
     long status = 0;
 
@@ -69,6 +73,16 @@ bool test_user_fault() {
     /* no vma there */
     TEST_ASSERT(run_user(segv_code, sizeof(segv_code), &status) > 0);
     TEST_ASSERT(status == 11);
+
+    /* other exceptions kill the task too, with linux's signal */
+    TEST_ASSERT(run_user(ud2_code, sizeof(ud2_code), &status) > 0);
+    TEST_ASSERT(status == 4);  /* SIGILL */
+
+    TEST_ASSERT(run_user(div0_code, sizeof(div0_code), &status) > 0);
+    TEST_ASSERT(status == 8);  /* SIGFPE */
+
+    TEST_ASSERT(run_user(int3_code, sizeof(int3_code), &status) > 0);
+    TEST_ASSERT(status == 5);  /* SIGTRAP */
     return true;
 }
 

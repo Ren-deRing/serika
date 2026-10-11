@@ -11,9 +11,9 @@ void spin_lock_init(spinlock_t *lock) {
 }
 
 void spin_lock(spinlock_t *lock) {
-    uint32_t me = this_cpu_read(id) + 1;
+    preempt_count_add(1); /* first: from here we stay on this cpu, so the id stays ours */
 
-    preempt_count_add(1);
+    uint32_t me = this_cpu_read(id) + 1;
 
     /* the owner can't be running this, it is a deadlock */
     if (lock->owner == me)
@@ -32,9 +32,9 @@ void spin_lock(spinlock_t *lock) {
 }
 
 bool spin_trylock(spinlock_t *lock) {
-    uint32_t me = this_cpu_read(id) + 1;
-
     preempt_count_add(1);
+
+    uint32_t me = this_cpu_read(id) + 1;
 
     uint32_t serving = lock->now_serving;
     if (lock->next_ticket == serving &&

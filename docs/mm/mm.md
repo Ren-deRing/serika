@@ -42,6 +42,9 @@ the ptes (`pmap_clear()`), shoot down, and only then free the frames. A cpu that
 entry could otherwise write into a frame someone else got. Page tables are not freed: another
 cpu may be walking them until the shootdown, so they wait for `mm_put()`.
 
+A shrinking `brk()` goes the same way: the pages past the new break are unmapped and freed,
+so growing again faults in zeroed pages, which malloc counts on.
+
 ## Related
 
 - [docs/sched/locking.md](../sched/locking.md): the rq and wait_queue chain

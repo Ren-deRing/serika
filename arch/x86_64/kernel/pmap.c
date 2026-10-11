@@ -318,54 +318,42 @@ void pmap_unmap(struct pmap *pmap, uintptr_t virt, size_t size) {
     spin_unlock_irqrestore(&pmap->lock, f);
 }
 
+/* pmap lock held. the entry mapping va: a pde for a 2MiB page (*huge), else a pte, present or not.
+   NULL if a table on the way is missing, or for a 1GiB page */
+static uint64_t *pmap_leaf(struct pmap *pmap, uintptr_t va, bool *huge) {
+    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
+
+    /* PML4 -> PDPT */
+    if (!(pml4[PML4_INDEX(va)] & PTE_PRESENT)) return NULL;
+    pdpte_t *pdpt = (pdpte_t *)P2V(pml4[PML4_INDEX(va)] & PTE_ADDR_MASK);
+
+    /* PDPT -> PD */
+    if (!(pdpt[PDPT_INDEX(va)] & PTE_PRESENT) || (pdpt[PDPT_INDEX(va)] & PDPTE_PS)) return NULL;
+    pde_t *pd = (pde_t *)P2V(pdpt[PDPT_INDEX(va)] & PTE_ADDR_MASK);
+
+    /* HUGE page: bit 7 is PS here, PAT in a pte, so the caller is told */
+    if (!(pd[PD_INDEX(va)] & PTE_PRESENT)) return NULL;
+
+    *huge = pd[PD_INDEX(va)] & PDE_PS;
+    if (*huge) return &pd[PD_INDEX(va)];
+
+    /* Normal page */
+    pte_t *pt = (pte_t *)P2V(pd[PD_INDEX(va)] & PTE_ADDR_MASK);
+    return &pt[PT_INDEX(va)];
+}
+
 uintptr_t pmap_extract(struct pmap *pmap, uintptr_t va) {
     if (!pmap) return 0;
 
     uint64_t f = spin_lock_irqsave(&pmap->lock);
 
-    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
+    bool huge;
+    uint64_t *e = pmap_leaf(pmap, va, &huge);
+    uintptr_t pa = 0;
 
-    /* PML4 -> PDPT */
-    size_t l4 = PML4_INDEX(va);
-    if (!(pml4[l4] & PTE_PRESENT)) {
-        spin_unlock_irqrestore(&pmap->lock, f);
-        return 0;
-    }
-
-    pdpte_t *pdpt = (pdpte_t *)P2V(pml4[l4] & PTE_ADDR_MASK);
-
-    /* PDPT -> PD */
-    size_t l3 = PDPT_INDEX(va);
-    if (!(pdpt[l3] & PTE_PRESENT) || (pdpt[l3] & PDPTE_PS)) {
-        spin_unlock_irqrestore(&pmap->lock, f);
-        return 0;
-    }
-
-    pde_t *pd = (pde_t *)P2V(pdpt[l3] & PTE_ADDR_MASK);
-
-    /* HUGE page */
-    size_t l2 = PD_INDEX(va);
-    if (!(pd[l2] & PTE_PRESENT)) {
-        spin_unlock_irqrestore(&pmap->lock, f);
-        return 0;
-    }
-
-    if (pd[l2] & PDE_PS) {
-        uintptr_t pa = (pd[l2] & PDE_ADDR_MASK) + (va & (PAGE_SIZE_HUGE - 1));
-        spin_unlock_irqrestore(&pmap->lock, f);
-        return pa;
-    }
-
-    /* Normal page */
-    pte_t *pt = (pte_t *)P2V(pd[l2] & PTE_ADDR_MASK);
-
-    size_t l1 = PT_INDEX(va);
-    if (!(pt[l1] & PTE_PRESENT)) {
-        spin_unlock_irqrestore(&pmap->lock, f);
-        return 0;
-    }
-
-    uintptr_t pa = (pt[l1] & PTE_ADDR_MASK) + (va & (PAGE_SIZE - 1));
+    if (e && (*e & PTE_PRESENT))
+        pa = huge ? (*e & PDE_ADDR_MASK) + (va & (PAGE_SIZE_HUGE - 1))
+                  : (*e & PTE_ADDR_MASK) + (va & (PAGE_SIZE - 1));
 
     spin_unlock_irqrestore(&pmap->lock, f);
     return pa;
@@ -379,30 +367,21 @@ bool pmap_protect(struct pmap *pmap, uintptr_t virt, size_t size, uint32_t flags
 
     uint64_t f = spin_lock_irqsave(&pmap->lock);
 
-    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
     bool changed = false;
 
     for (uintptr_t va = virt; va < virt + size; va += PAGE_SIZE) {
-        if (!(pml4[PML4_INDEX(va)] & PTE_PRESENT)) continue;
-        pdpte_t *pdpt = (pdpte_t *)P2V(pml4[PML4_INDEX(va)] & PTE_ADDR_MASK);
+        bool huge;
+        pte_t *e = pmap_leaf(pmap, va, &huge);
+        if (!e || huge || !(*e & PTE_PRESENT)) continue;
 
-        if (!(pdpt[PDPT_INDEX(va)] & PTE_PRESENT) || (pdpt[PDPT_INDEX(va)] & PDPTE_PS)) continue;
-        pde_t *pd = (pde_t *)P2V(pdpt[PDPT_INDEX(va)] & PTE_ADDR_MASK);
-
-        if (!(pd[PD_INDEX(va)] & PTE_PRESENT) || (pd[PD_INDEX(va)] & PDE_PS)) continue;
-        pte_t *pt = (pte_t *)P2V(pd[PD_INDEX(va)] & PTE_ADDR_MASK);
-
-        pte_t pte = pt[PT_INDEX(va)];
-        if (!(pte & PTE_PRESENT)) continue;
-
-        pte &= ~(PTE_WRITABLE | PTE_USER | PTE_NX);
+        pte_t pte = *e & ~(PTE_WRITABLE | PTE_USER | PTE_NX);
 
         if (flags & PROT_WRITE) pte |= PTE_WRITABLE;
         if ((flags & PROT_USER) && (flags & (PROT_READ | PROT_WRITE | PROT_EXEC))) pte |= PTE_USER;
         if (!(flags & PROT_EXEC)) pte |= PTE_NX;
 
-        if (pt[PT_INDEX(va)] != pte) {
-            pt[PT_INDEX(va)] = pte;
+        if (*e != pte) {
+            *e = pte;
             changed = true;
         }
     }
@@ -418,23 +397,15 @@ size_t pmap_clear(struct pmap *pmap, uintptr_t virt, size_t size, uintptr_t *phy
 
     uint64_t f = spin_lock_irqsave(&pmap->lock);
 
-    pml4e_t *pml4 = (pml4e_t *)pmap->pm_root_virt;
     size_t count = 0;
 
     for (uintptr_t va = virt; va < virt + size && count < max; va += PAGE_SIZE) {
-        if (!(pml4[PML4_INDEX(va)] & PTE_PRESENT)) continue;
-        pdpte_t *pdpt = (pdpte_t *)P2V(pml4[PML4_INDEX(va)] & PTE_ADDR_MASK);
+        bool huge;
+        pte_t *e = pmap_leaf(pmap, va, &huge);
+        if (!e || huge || !(*e & PTE_PRESENT)) continue;
 
-        if (!(pdpt[PDPT_INDEX(va)] & PTE_PRESENT) || (pdpt[PDPT_INDEX(va)] & PDPTE_PS)) continue;
-        pde_t *pd = (pde_t *)P2V(pdpt[PDPT_INDEX(va)] & PTE_ADDR_MASK);
-
-        if (!(pd[PD_INDEX(va)] & PTE_PRESENT) || (pd[PD_INDEX(va)] & PDE_PS)) continue;
-        pte_t *pt = (pte_t *)P2V(pd[PD_INDEX(va)] & PTE_ADDR_MASK);
-
-        if (!(pt[PT_INDEX(va)] & PTE_PRESENT)) continue;
-
-        phys[count++] = pt[PT_INDEX(va)] & PTE_ADDR_MASK;
-        pt[PT_INDEX(va)] = 0;
+        phys[count++] = *e & PTE_ADDR_MASK;
+        *e = 0;
     }
 
     spin_unlock_irqrestore(&pmap->lock, f);
