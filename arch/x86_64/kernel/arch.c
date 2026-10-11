@@ -16,6 +16,12 @@ notrace void arch_irq_disable(void) {
     asm volatile ("cli");
 }
 
+notrace bool arch_irqs_disabled(void) {
+    uint64_t flags;
+    asm volatile ("pushfq; pop %0" : "=rm"(flags));
+    return !(flags & (1ULL << 9)); /* IF */
+}
+
 notrace void arch_irq_enable(void) {
     asm volatile ("sti");
 }

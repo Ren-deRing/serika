@@ -1,5 +1,6 @@
 #pragma once
 
+#include <serika/percpu.h>
 #include <serika/sched.h>
 
 #include <stdint.h>
@@ -14,6 +15,8 @@ struct cpu {
 
     uint32_t    id;
     uint32_t    hw_id;
+
+    uint32_t    preempt_count; /* serika/preempt.h */
 
     uint64_t    tsc_freq_hz;
 
@@ -35,3 +38,4 @@ void cpu_init();
 struct cpu* get_this_core(void);
 
 #define curcpu get_this_core()
+#define current_task() this_cpu_read(rq.curr) /* lock free */

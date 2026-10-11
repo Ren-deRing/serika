@@ -1,6 +1,7 @@
 #include <serika/arch.h>
 #include <serika/cpu.h>
 #include <serika/panic.h>
+#include <serika/preempt.h>
 #include <serika/printk.h>
 
 #include <asm/trapframe.h>
@@ -41,7 +42,16 @@ notrace static void unhandled_exception(struct trapframe *tf) {
 
 notrace void isr_handler(struct trapframe *tf) {
     struct isr_slot *slot = &handlers[tf->vector];
-    if (slot->func) { slot->func(tf, slot->data); return; }
+    if (slot->func) {
+        /* exceptions and nmi can arrive before swapgs */
+        bool hardirq = tf->vector >= 32;
+
+        if (hardirq) preempt_count_add(HARDIRQ_OFFSET);
+        slot->func(tf, slot->data);
+        if (hardirq) preempt_count_sub(HARDIRQ_OFFSET); /* maybe the count moved with us */
+
+        return;
+    }
 
     unhandled_exception(tf);
 }

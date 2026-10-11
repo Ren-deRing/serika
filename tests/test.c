@@ -1,3 +1,5 @@
+#include <serika/arch.h>
+#include <serika/preempt.h>
 #include <serika/printk.h>
 #include <tests/test.h>
 
@@ -24,6 +26,8 @@ static struct test tests[] = {
     { "smp spread",  test_smp_spread },
     { "smp balance", test_smp_balance },
     { "user task",   test_user_task },
+    { "wait sleep",  test_wait_sleep },
+    { "wait pingpong", test_wait_pingpong },
 };
 
 void test_run_all() {
@@ -33,7 +37,17 @@ void test_run_all() {
     printk("[TEST] running %zu tests\n", total);
 
     for (size_t i = 0; i < total; i++) {
+        uint32_t count = preempt_count();
+        bool irq_off = arch_irqs_disabled();
+
         bool result = tests[i].fn();
+
+        /* a test that leaves a lock held, or irq off, breaks everything after it */
+        if (preempt_count() != count || arch_irqs_disabled() != irq_off) {
+            printk("[FAIL] %s left preempt_count 0x%x -> 0x%x, irq %s -> %s\n", tests[i].name,
+                   count, preempt_count(), irq_off ? "off" : "on", arch_irqs_disabled() ? "off" : "on");
+            result = false;
+        }
 
         printk("[TEST] %-24s %s\n", tests[i].name, result ? "PASS" : "FAIL");
 

@@ -4,6 +4,7 @@
 #include <serika/cpu.h>
 #include <serika/intc.h>
 #include <serika/panic.h>
+#include <serika/preempt.h>
 
 #include <asm/arch.h>
 #include <asm/trapframe.h>
@@ -42,11 +43,13 @@ void dequeue_task(struct runqueue *rq, struct task *task) {
 static void account_enqueue(struct runqueue *rq, struct task *task) {
     rq->load += task->weight;
     rq->nr_running++;
+    task->on_rq = true;
 }
 
 static void account_dequeue(struct runqueue *rq, struct task *task) {
     rq->load -= task->weight;
     rq->nr_running--;
+    task->on_rq = false;
 }
 
 static void update_min_vruntime(struct runqueue *rq) {
@@ -118,6 +121,8 @@ static void migrate_task(struct runqueue *src, struct runqueue *dst, struct task
     uint64_t lag = task->vruntime > src->min_vruntime ? task->vruntime - src->min_vruntime : 0;
     task->vruntime = dst->min_vruntime + lag;
 
+    __atomic_store_n(&task->cpu, dst->cpu, 5); /* task_rq_lock() reads it unlocked */
+
     account_enqueue(dst, task);
     enqueue_task(dst, task);
 }
@@ -171,7 +176,7 @@ void sched_tick(void) {
     spin_unlock(&rq->lock);
 }
 
-void schedule() {
+void __schedule(bool preempt) {
     interrupt_status_t flags = arch_irq_save();
 
     struct cpu *c = curcpu;
@@ -186,7 +191,10 @@ void schedule() {
     update_curr(rq);
 
     if (prev != c->idle) {
-        if (prev->state == TASK_RUNNING) {
+        /* preempted while sleeping stays: its condition is not checked yet */
+        bool leaving = prev->state == TASK_DEAD || (prev->state == TASK_SLEEPING && !preempt);
+
+        if (!leaving) {
             prev->state = TASK_RUNNABLE;
             enqueue_task(rq, prev);
         } else {
@@ -206,11 +214,22 @@ void schedule() {
 
     rq->curr = next;
 
-    if (next != prev) switch_to(prev, next);
+    if (next != prev) {
+        /* the count follows the task, we may resume on another cpu */
+        prev->saved_preempt_count = preempt_count();
+        preempt_count_set(next->saved_preempt_count);
+
+        switch_to(prev, next);
+    }
 
     /* new tasks never get here, task_start() / task_start_user() call it for them */
     finish_task_switch();
     arch_irq_restore(flags);
+}
+
+void schedule() {
+    schedule_check((uintptr_t)__builtin_return_address(0));
+    __schedule(false);
 }
 
 /* TODO */
@@ -227,8 +246,86 @@ void finish_task_switch(void) {
     else              task_free(dead);
 }
 
+/* t->cpu changes only under the lock of the rq it leaves, so once held it stays */
+static struct runqueue *task_rq_lock(struct task *t, uint64_t *flags) {
+    for (;;) {
+        struct runqueue *rq = &cpus[__atomic_load_n(&t->cpu, 5)].rq;
+
+        *flags = spin_lock_irqsave(&rq->lock);
+        if (__atomic_load_n(&t->cpu, 5) == rq->cpu) return rq;
+
+        spin_unlock_irqrestore(&rq->lock, *flags);
+    }
+}
+
+/* a sleeper gets half a latency of credit at most */
+static void place_wakeup(struct runqueue *rq, struct task *t) {
+    uint64_t credit = us_to_tsc(SCHED_LATENCY_US) / 2;
+    uint64_t floor = rq->min_vruntime > credit ? rq->min_vruntime - credit : 0;
+
+    if (t->vruntime < floor) t->vruntime = floor;
+}
+
+/* rq may be another cpu's, curr's vruntime is a tick old at most */
+static bool wakeup_preempts(struct runqueue *rq, struct task *t) {
+    struct task *curr = rq->curr;
+
+    if (curr == cpus[rq->cpu].idle) return true;
+
+    return t->vruntime + us_to_tsc(SCHED_WAKEUP_GRAN_US) < curr->vruntime;
+}
+
+bool wake_up_process(struct task *t) {
+    uint64_t flags;
+    struct runqueue *rq = task_rq_lock(t, &flags);
+
+    bool woke = false;
+    bool kick = false;
+
+    if (t->state != TASK_SLEEPING) goto out;
+
+    woke = true;
+
+    /* still on the rq, between prepare_to_wait() and schedule(). schedule() keeps it */
+    if (t->on_rq) {
+        t->state = t == rq->curr ? TASK_RUNNING : TASK_RUNNABLE;
+        goto out;
+    }
+
+    /* off the rq, so its context is saved */
+    place_wakeup(rq, t);
+    t->state = TASK_RUNNABLE;
+
+    account_enqueue(rq, t);
+    enqueue_task(rq, t);
+
+    if (wakeup_preempts(rq, t)) {
+        rq->need_resched = true;
+        kick = rq->cpu != curcpu->id;
+    }
+
+out:
+    spin_unlock_irqrestore(&rq->lock, flags);
+
+    if (kick) intc_send_ipi(cpus[rq->cpu].hw_id, RESCHED_VECTOR);
+
+    return woke;
+}
+
+/* sleeping and off its rq */
+bool sched_task_sleeping(struct task *t) {
+    uint64_t flags;
+    struct runqueue *rq = task_rq_lock(t, &flags);
+
+    bool asleep = t->state == TASK_SLEEPING && !t->on_rq;
+
+    spin_unlock_irqrestore(&rq->lock, flags);
+
+    return asleep;
+}
+
 bool sched_cpu_online(uint32_t cpu) {
-    return __atomic_load_n(&cpus[cpu].rq.online, 5); /* __ATOMIC_SEQ_CST */
+    return __atomic_load_n(&cpus[cpu].rq.online, 5);
 }
 
 /* locked read */
@@ -275,6 +372,7 @@ void sched_add_task_cpu(struct task *task, uint32_t cpu) {
 
     task->vruntime = rq->min_vruntime;
     task->state = TASK_RUNNABLE;
+    __atomic_store_n(&task->cpu, cpu, 5);
 
     account_enqueue(rq, task);
     enqueue_task(rq, task);
@@ -295,7 +393,7 @@ notrace static void resched_handler(struct trapframe *tf, void *data) {
     (void)data;
 
     intc_eoi();
-    schedule();
+    preempt_schedule();
 }
 
 static void idle_loop(void) {
@@ -309,18 +407,21 @@ void sched_init(void) {
 
     spin_lock_init(&rq->lock);
     RB_INIT(&rq->tasks);
+    rq->cpu = c->id;
 
     extern void register_handler(uint8_t vector, void (*handler)(struct trapframe *, void *), void *data);
     register_handler(RESCHED_VECTOR, resched_handler, NULL);
 
     c->idle = task_create(idle_loop, 19);
     if (!c->idle) panic("sched: unable to create idle task -- out of memory?");
+    c->idle->cpu = c->id;
 
     struct task *boot = task_create_boot();
     if (!boot) panic("sched: unable to create boot task -- out of memory?");
 
     boot->vruntime = rq->min_vruntime;
     boot->pinned = true; /* runs on the boot stack */
+    boot->cpu = c->id;
     boot->state = TASK_RUNNING;
     boot->exec_start = rdtsc();
 

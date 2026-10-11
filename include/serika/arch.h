@@ -10,6 +10,7 @@ void arch_irq_restore(interrupt_status_t flags);
 
 void arch_irq_disable(void);
 void arch_irq_enable(void);
+bool arch_irqs_disabled(void);
 void arch_halt();
 void arch_pause();
 void arch_panic(void);

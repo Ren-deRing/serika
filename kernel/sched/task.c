@@ -24,6 +24,9 @@ static struct task *task_alloc(task_entry_t entry, int nice) {
     task->weight = sched_prio_to_weight[nice + 20];
     task->pmap   = pmap_kernel(); /* kthread. user tasks replace it */
 
+    /* first run drops the rq lock of whoever switched to us */
+    task->saved_preempt_count = 1;
+
     return task;
 }
 
@@ -50,7 +53,7 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* not runnable until sched_add_task(). */
+/* not runnable until sched_add_task() */
 struct task *task_create_user(const void *code, size_t size, int nice) {
     if (size > PAGE_SIZE) return NULL;
 
@@ -74,7 +77,7 @@ struct task *task_create_user(const void *code, size_t size, int nice) {
     if (pmap_map(pmap, USER_STACK_TOP - PAGE_SIZE, stack_phys, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_USER) != 0) goto fail;
 
     task->pmap = pmap;
-    task->parent = curcpu->rq.curr; /* the creator reaps it */
+    task->parent = current_task(); /* creator reaps */
     task->kstack = (void *)P2V(kstack_phys);
     task->kernel_stack_size = TASK_KSTACK_SIZE;
 
@@ -116,12 +119,12 @@ void task_free(struct task *task) {
     kfree(task);
 }
 
-/* schedule() switched to us holding the rq lock, irq off */
+/* rq lock held, irq off */
 void task_start(void) {
     finish_task_switch();
     arch_irq_enable();
 
-    curcpu->rq.curr->entry();
+    current_task()->entry();
     task_exit(0);
 }
 
@@ -132,7 +135,7 @@ notrace void task_start_user(void) {
 }
 
 long task_wait(struct task *child, long *status) {
-    if (child->parent != curcpu->rq.curr) return -ECHILD;
+    if (child->parent != current_task()) return -ECHILD;
     if (__atomic_load_n(&child->state, 2) != TASK_ZOMBIE) return 0; /* __ATOMIC_ACQUIRE */
 
     long id = child->id;
@@ -145,7 +148,7 @@ long task_wait(struct task *child, long *status) {
 void task_exit(long code) {
     arch_irq_disable();
 
-    struct task *curr = curcpu->rq.curr;
+    struct task *curr = current_task();
 
     curr->exit_code = code;
     curr->state = TASK_DEAD;

@@ -1,4 +1,7 @@
+#include <serika/arch.h>
 #include <serika/compiler.h>
+#include <serika/cpu.h>
+#include <serika/sched.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
 
@@ -19,10 +22,7 @@ extern void syscall_entry(void);
 void syscall_init(void) {
     wrmsr(IA32_EFER, rdmsr(IA32_EFER) | EFER_SCE);
 
-    /*
-        syscall: cs = 0x08, ss = 0x10.
-        sysret:  ss = 0x10 + 8 = 0x18 (user data), cs = 0x10 + 16 = 0x20 (user code). rpl 3 is added by cpu.
-    */
+    /* syscall: cs 0x08, ss 0x10. sysret: ss 0x10 + 8 = 0x18, cs 0x10 + 16 = 0x20 */
     wrmsr(IA32_STAR, (0x10ULL << 48) | (0x08ULL << 32));
     wrmsr(IA32_LSTAR, (uint64_t)syscall_entry);
     wrmsr(IA32_SFMASK, SFMASK_BITS);
@@ -37,5 +37,13 @@ notrace void syscall_bad_rip(void) {
 notrace void arch_syscall(struct trapframe *tf) {
     const long args[6] = { tf->rdi, tf->rsi, tf->rdx, tf->r10, tf->r8, tf->r9 };
 
+    /* entered with irq off */
+    arch_irq_enable();
+
     tf->rax = syscall_dispatch(tf->rax, args);
+
+    /* sysret needs irq off */
+    arch_irq_disable();
+
+    if (curcpu->rq.need_resched) schedule();
 }

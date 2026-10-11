@@ -59,10 +59,7 @@ syscall_entry:
     addq $16, %rsp                     /* vector, error */
     popq %rcx                          /* rip */
 
-    /*
-        bits 63..47 all equal bit 47. sign-extend and compare.
-        rax is the return value, r11 is clobbered by syscall anyway
-    */
+    /* canonical rip: sign-extend from bit 47 and compare. r11 is free, rax is the return value */
     movq %rcx, %r11
     shlq $16, %r11
     sarq $16, %r11

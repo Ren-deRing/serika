@@ -52,6 +52,10 @@ struct task {
     uint64_t          prev_sum_exec; /* sum_exec when picked */
 
     bool              pinned;        /* never migrates to another cpu */
+
+    uint32_t          cpu;           /* changes under rq's lock */
+    uint32_t          saved_preempt_count; /* the cpu's count while we are switched out */
+    bool              on_rq;         /* curr or in the tree. rq lock */
     long              exit_code;     /* wait status, linux encoding */
 };
 

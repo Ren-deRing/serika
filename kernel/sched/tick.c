@@ -29,7 +29,7 @@ notrace static void tick_handler(struct trapframe *tf, void *data) {
 
     intc_eoi();
 
-    if (c->rq.need_resched) schedule();
+    if (c->rq.need_resched) preempt_schedule();
 }
 
 void tick_init(void) {

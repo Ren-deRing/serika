@@ -45,3 +45,6 @@ bool test_smp_spread();
 bool test_smp_balance();
 
 bool test_user_task();
+
+bool test_wait_sleep();
+bool test_wait_pingpong();

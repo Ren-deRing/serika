@@ -6,10 +6,10 @@
 typedef struct {
     volatile uint32_t now_serving;
     volatile uint32_t next_ticket;
-    volatile int holder_cpu;
+    volatile uint32_t owner;
 } spinlock_t;
 
-#define SPINLOCK_INITIALIZER { .now_serving = 0, .next_ticket = 0, .holder_cpu = -1 }
+#define SPINLOCK_INITIALIZER { .now_serving = 0, .next_ticket = 0, .owner = 0 }
 
 void spin_lock_init(spinlock_t *lock);
 void spin_lock(spinlock_t *lock);
