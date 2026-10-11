@@ -5,6 +5,7 @@
 #include <asm/trapframe.h>
 
 #include <serika/list.h>
+#include <serika/signal.h>
 #include <serika/wait.h>
 
 #include <deps/tree.h>
@@ -45,6 +46,7 @@ struct task {
     struct pmap      *pmap;          /* mm->pmap, or the kernel's */
     struct mm        *mm;            /* NULL for kthreads */
     struct files     *files;         /* NULL for kthreads */
+    struct sighand   *sighand;       /* NULL for kthreads */
 
     struct task      *parent;        /* NULL: frees itself on exit. tasklist_lock */
     list_node         children;      /* tasklist_lock */
@@ -66,6 +68,12 @@ struct task {
     uint32_t          saved_preempt_count; /* the cpu's count while we are switched out */
     bool              on_rq;         /* curr or in the tree. rq lock */
     long              exit_code;     /* wait status, linux encoding */
+
+    uint64_t          blocked;       /* signals. only the task changes it, under sighand lock */
+    uint64_t          pending;       /* sighand lock, atomic to read */
+    struct ksiginfo   siginfo[NSIG]; /* of each pending signal */
+
+    struct task      *pid_next;      /* pid hash. tasklist_lock */
 };
 
 void switch_to(struct task *prev, struct task *next);
@@ -74,7 +82,8 @@ void task_start(void);
 void task_start_user(void);
 
 struct task *task_create(task_entry_t entry, int nice);
-struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry, uintptr_t user_stack, int nice);
+struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *sighand,
+                            uintptr_t entry, uintptr_t user_stack, int nice);
 struct task *task_create_user(const void *code, size_t size, int nice);
 struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice);
 struct task *task_create_boot(void);
@@ -82,3 +91,4 @@ void task_free(struct task *task);
 void task_dead(struct task *task);
 void task_exit(long code);
 long task_wait(struct task *child, long *status, int options);
+int task_signal(long pid, int sig, const struct ksiginfo *info); /* sig 0: is it there */

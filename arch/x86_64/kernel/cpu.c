@@ -44,7 +44,11 @@ int enable_xsaves() {
     asm volatile("xsetbv" :: "a"(0x7), "d"(0), "c"(0));
     wrmsr(0xDA0, 0);
 
-    curcpu->arch_cpu_data->xsave_size = ebx;
+    cpuid(0xD, 1, &eax, &ebx, &ecx, &edx);
+    curcpu->arch_cpu_data->xsave_size = ebx; /* xsaves, compacted: the switch area */
+
+    cpuid(0xD, 0, &eax, &ebx, &ecx, &edx);
+    curcpu->arch_cpu_data->xsave_user_size = ebx; /* xsave, standard: signal frames */
 
     return 0;
 }

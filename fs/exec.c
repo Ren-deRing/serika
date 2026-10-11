@@ -5,6 +5,7 @@
 #include <serika/fcntl.h>
 #include <serika/mm.h>
 #include <serika/page.h>
+#include <serika/signal.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
 #include <serika/string.h>
@@ -287,10 +288,12 @@ int task_create_exec(const char *path, const char *const argv[], const char *con
     if ((err = setup_stack(mm, path, argv, envp, &img, &sp)) != 0) goto out;
 
     struct files *files = files_create();
-    struct task *task = files ? task_create_mm(mm, files, img.entry, sp, nice) : NULL;
+    struct sighand *sighand = sighand_create();
+    struct task *task = files && sighand ? task_create_mm(mm, files, sighand, img.entry, sp, nice) : NULL;
 
     if (!task) {
         if (files) files_put(files);
+        if (sighand) sighand_put(sighand);
         err = -ENOMEM;
         goto out;
     }

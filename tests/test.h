@@ -64,6 +64,7 @@ bool test_smp_balance();
 bool test_user_task();
 bool test_user_fault();
 bool test_user_thread();
+bool test_user_kill();
 
 bool test_wait_sleep();
 bool test_wait_pingpong();
@@ -77,3 +78,4 @@ bool test_vfs_initrd();
 bool test_exec();
 bool test_exec_glibc();
 bool test_exec_files();
+bool test_exec_signals();

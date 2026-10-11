@@ -3,7 +3,9 @@
 #include <serika/cpu.h>
 #include <serika/errno.h>
 #include <serika/mm.h>
+#include <serika/printk.h>
 #include <serika/sched.h>
+#include <serika/signal.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
 
@@ -36,19 +38,31 @@ notrace void syscall_bad_rip(void) {
     task_exit(11); /* TODO: no signals yet */
 }
 
-/* called from syscall_entry, irq off */
-notrace void arch_syscall(struct trapframe *tf) {
+/* called from syscall_entry, irq off. nonzero: leave through iretq, sysret would lose rcx and r11 */
+notrace int arch_syscall(struct trapframe *tf) {
     const long args[6] = { tf->rdi, tf->rsi, tf->rdx, tf->r10, tf->r8, tf->r9 };
 
     /* entered with irq off */
     arch_irq_enable();
+
+    if (tf->rax == SYS_RT_SIGRETURN) {
+        if (!signal_restore(tf)) {
+            printk("signal: task %lu killed by %d -- a bad sigreturn frame\n", current_task()->id, 11);
+            task_exit(11);
+        }
+
+        arch_irq_disable();
+        exit_to_user(tf, false);
+        return 1;
+    }
 
     tf->rax = syscall_dispatch(tf->rax, args);
 
     /* sysret needs irq off */
     arch_irq_disable();
 
-    if (curcpu->rq.need_resched) schedule();
+    exit_to_user(tf, true);
+    return 0;
 }
 
 #define ARCH_SET_FS 0x1002

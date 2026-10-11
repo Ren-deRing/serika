@@ -432,7 +432,6 @@ out:
     return ok;
 }
 
-/* linux's: the new break, or the old one if it can't move */
 uintptr_t mm_brk(struct mm *mm, uintptr_t brk) {
     mutex_lock(&mm->map_mutex);
 

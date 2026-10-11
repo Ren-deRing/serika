@@ -14,7 +14,7 @@ EXEC := $(BINS:%=$(INITRD_DIR)/bin/%) $(BINS:%=$(INITRD_DIR)/bin/%-pie)
 
 # static glibc from the host (glibc-static)
 GLIBC_CC   := clang
-GLIBC_BINS := hello files
+GLIBC_BINS := hello files signals
 EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%)
 
 LIB_OBJS     := $(LIB:%=$(UOBJ_DIR)/%.o)
@@ -38,7 +38,7 @@ $(UOBJ_DIR)/pie/%.o: %
 $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
 	@echo "GLIBC : $@"
-	@$(GLIBC_CC) -static -O2 -Wall -Wextra $< -o $@
+	@$(GLIBC_CC) -static -O2 -Wall -Wextra $< -o $@ -lm
 
 $(INITRD_DIR)/bin/%-pie: $(UOBJ_DIR)/pie/bin/%.c.o $(LIB_PIE_OBJS)
 	@mkdir -p $(dir $@)

@@ -39,30 +39,6 @@ static long sys_brk(long brk) {
     return mm_brk(current_task()->mm, brk);
 }
 
-/* TODO: no signals yet */
-static long sys_rt_sigaction(long sig, long act, long oact, long sigsetsize) {
-    (void)sig; (void)act;
-
-    struct { uint64_t handler, flags, restorer, mask; } old = { 0 };
-
-    if (sigsetsize != sizeof(uint64_t)) return -EINVAL;
-    if (oact && copy_to_user(oact, &old, sizeof(old)) != 0) return -EFAULT;
-
-    return 0;
-}
-
-/* TODO: same */
-static long sys_rt_sigprocmask(long how, long set, long oset, long sigsetsize) {
-    (void)how; (void)set;
-
-    uint64_t old = 0;
-
-    if (sigsetsize != sizeof(uint64_t)) return -EINVAL;
-    if (oset && copy_to_user(oset, &old, sizeof(old)) != 0) return -EFAULT;
-
-    return 0;
-}
-
 /* TODO: no futexes */
 static long sys_set_tid_address(long tidptr) {
     (void)tidptr;
@@ -85,12 +61,18 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
         case SYS_IOCTL:           return sys_ioctl(args[0], args[1], args[2]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
+        case SYS_GETPID:          return sys_getpid();
         case SYS_EXIT:            return sys_exit(args[0]);
+        case SYS_KILL:            return sys_kill(args[0], args[1]);
+        case SYS_RT_SIGPENDING:   return sys_rt_sigpending(args[0], args[1]);
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);
+        case SYS_GETTID:          return sys_gettid();
+        case SYS_TKILL:           return sys_tkill(args[0], args[1]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
         case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
         case SYS_EXIT_GROUP:      return sys_exit(args[0]); /* no thread groups yet */
+        case SYS_TGKILL:          return sys_tgkill(args[0], args[1], args[2]);
         case SYS_OPENAT:          return sys_openat(args[0], args[1], args[2], args[3]);
         case SYS_NEWFSTATAT:      return sys_newfstatat(args[0], args[1], args[2], args[3]);
     }

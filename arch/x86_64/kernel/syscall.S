@@ -18,7 +18,7 @@ syscall_entry:
     pushq %r11                         /* rflags */
     pushq $0x23                        /* cs */
     pushq %rcx                         /* rip */
-    pushq $0                           /* error */
+    pushq %rax                         /* error: the syscall number, for a restart */
     pushq $0                           /* vector */
 
     pushq %rax
@@ -39,6 +39,9 @@ syscall_entry:
 
     movq %rsp, %rdi # trapframe
     call arch_syscall
+
+    testl %eax, %eax                   /* nonzero: every register is the frame's, rcx and r11 too */
+    jnz .Liret
 
     popq %r15
     popq %r14
@@ -72,6 +75,29 @@ syscall_entry:
 
     swapgs
     sysretq
+
+.Liret:
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
+
+    addq $16, %rsp                     /* vector, error */
+
+    /* rip and rsp were checked, cs and ss are ours */
+    swapgs
+    iretq
 
 .Lbad_rip:
     call syscall_bad_rip               /* never returns. still on the kernel stack */

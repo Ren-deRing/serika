@@ -2,6 +2,7 @@
 #include <serika/errno.h>
 #include <serika/mm.h>
 #include <serika/sched.h>
+#include <serika/signal.h>
 #include <serika/syscall.h>
 
 #include <asm/arch.h>
@@ -59,11 +60,27 @@ long sys_clock_gettime(long clk, long utp) {
     return copy_to_user(utp, &ts, sizeof(ts));
 }
 
-/* TODO: no timers */
+/* TODO: no timers. a signal ends it early: -EINTR */
 static long sleep_until(uint64_t deadline) {
-    while (rdtsc() < deadline) schedule();
+    while (rdtsc() < deadline) {
+        if (signal_pending(current_task())) return -EINTR;
+        schedule();
+    }
 
     return 0;
+}
+
+/* what is left of it, for rem */
+static int put_left(long urem, uint64_t deadline) {
+    uint64_t now = rdtsc(), freq = this_cpu_read(tsc_freq_hz);
+    uint64_t left = deadline > now ? deadline - now : 0;
+
+    struct timespec ts = {
+        .tv_sec  = left / freq,
+        .tv_nsec = (left % freq) * NSEC_PER_SEC / freq,
+    };
+
+    return copy_to_user(urem, &ts, sizeof(ts));
 }
 
 static int timespec_to_tsc(long uts, uint64_t *tsc) {
@@ -88,12 +105,12 @@ long sys_nanosleep(long ureq, long urem) {
     int err = timespec_to_tsc(ureq, &delta);
     if (err) return err;
 
-    sleep_until(rdtsc() + delta);
+    uint64_t deadline = rdtsc() + delta;
 
-    struct timespec zero = { 0, 0 };
-    if (urem) return copy_to_user(urem, &zero, sizeof(zero));
+    if (sleep_until(deadline) == 0) return 0;
 
-    return 0;
+    if (urem && put_left(urem, deadline) != 0) return -EFAULT;
+    return -EINTR;
 }
 
 long sys_clock_nanosleep(long clk, long flags, long ureq, long urem) {
@@ -108,10 +125,10 @@ long sys_clock_nanosleep(long clk, long flags, long ureq, long urem) {
 
     if (!(flags & TIMER_ABSTIME)) when += now;
 
-    sleep_until(rdtsc() + (when > now ? when - now : 0));
+    uint64_t deadline = rdtsc() + (when > now ? when - now : 0);
 
-    struct timespec zero = { 0, 0 };
-    if (urem && !(flags & TIMER_ABSTIME)) return copy_to_user(urem, &zero, sizeof(zero));
+    if (sleep_until(deadline) == 0) return 0;
 
-    return 0;
+    if (urem && !(flags & TIMER_ABSTIME) && put_left(urem, deadline) != 0) return -EFAULT;
+    return -EINTR;
 }

@@ -114,8 +114,8 @@ before moving a task.
 
 ## Lock order
 
-`tasklist_lock`, then `wait_queue` lock, then rq lock, then the buddy and slab locks. Never the
-other way: no code takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
+`tasklist_lock`, then `sighand->lock`, then `wait_queue` lock, then rq lock, then the buddy and
+slab locks. Never the other way: no code takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
 lock before it does anything else. `task_free()` calls both allocators, but only after that.
 
 `mm->lock` and the pmap lock are not part of this chain. See [docs/mm/mm.md](../mm/mm.md).

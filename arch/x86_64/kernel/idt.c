@@ -5,6 +5,7 @@
 #include <serika/panic.h>
 #include <serika/preempt.h>
 #include <serika/printk.h>
+#include <serika/signal.h>
 #include <serika/task.h>
 
 #include <asm/trapframe.h>
@@ -43,6 +44,23 @@ notrace static void unhandled_exception(struct trapframe *tf) {
     printk("don't worry! that was not a panic.\n\n");
 }
 
+static int exception_signo(uint64_t vector) {
+    switch (vector) {
+        case 0: case 16: case 19: return 8;  /* #DE #MF #XM: SIGFPE */
+        case 1: case 3:           return 5;  /* #DB #BP: SIGTRAP */
+        case 6:                   return 4;  /* #UD: SIGILL */
+        case 17:                  return 7;  /* #AC: SIGBUS */
+        default:                  return 11; /* SIGSEGV */
+    }
+}
+
+notrace static void user_exception(struct trapframe *tf) {
+    int sig = exception_signo(tf->vector);
+    struct ksiginfo info = { .signo = sig, .code = SI_KERNEL, .addr = tf->rip };
+
+    force_sig(sig, &info);
+}
+
 notrace void isr_handler(struct trapframe *tf) {
     struct isr_slot *slot = &handlers[tf->vector];
     if (slot->func) {
@@ -53,10 +71,17 @@ notrace void isr_handler(struct trapframe *tf) {
         slot->func(tf, slot->data);
         if (hardirq) preempt_count_sub(HARDIRQ_OFFSET); /* maybe the count moved with us */
 
+        if (tf->cs & 3) exit_to_user(tf, false);
         return;
     }
 
-    unhandled_exception(tf);
+    /* nmi, #DF and #MC are the machine's, whoever was running */
+    bool machine = tf->vector == 2 || tf->vector == 8 || tf->vector == 18;
+
+    if ((tf->cs & 3) && tf->vector < 32 && !machine) user_exception(tf);
+    else                                             unhandled_exception(tf);
+
+    if (tf->cs & 3) exit_to_user(tf, false);
 }
 
 notrace static void nmi_handler(struct trapframe *tf, void *data) {
@@ -83,11 +108,13 @@ notrace static void page_fault_handler(struct trapframe *tf, void *data) {
     arch_irq_enable();
     int ret = mm_fault(current_task()->mm, addr, access);
 
-    /* still irq on: task_exit() closes the files */
-    if (ret != 0) {
-        printk("fault: task %lu killed -- %s at 0x%lx, rip 0x%lx\n", current_task()->id,
-               ret == -EFAULT ? "bad access" : "out of memory", addr, tf->rip);
-        task_exit(11); /* TODO: no signals yet */
+    if (ret == -ENOMEM) {
+        struct ksiginfo info = { .signo = SIGKILL, .code = SI_KERNEL };
+        force_sig(SIGKILL, &info);
+    } else if (ret != 0) {
+        struct ksiginfo info = { .signo = SIGSEGV, .addr = addr,
+                                 .code = (tf->error & PF_PRESENT) ? SEGV_ACCERR : SEGV_MAPERR };
+        force_sig(SIGSEGV, &info);
     }
 
     arch_irq_disable();
@@ -113,7 +140,7 @@ int init_idt() {
     idt_set_descriptor(0,  isr0,  0x8E, 0);
 	idt_set_descriptor(1,  isr1,  0x8E, 0);
 	idt_set_descriptor(2,  isr2,  0x8E, 2); // NMI IST
-	idt_set_descriptor(3,  isr3,  0x8E, 0);
+	idt_set_descriptor(3,  isr3,  0xEE, 0); // DPL3: a user int3 is #BP, not #GP
 	idt_set_descriptor(4,  isr4,  0x8E, 0);
 	idt_set_descriptor(5,  isr5,  0x8E, 0);
 	idt_set_descriptor(6,  isr6,  0x8E, 0);

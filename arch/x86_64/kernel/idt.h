@@ -4,10 +4,11 @@
 
 #include <stdint.h>
 
-#define PF_WRITE (1 << 1)
-#define PF_USER  (1 << 2)
-#define PF_RSVD  (1 << 3)
-#define PF_INSTR (1 << 4)
+#define PF_PRESENT (1 << 0)
+#define PF_WRITE   (1 << 1)
+#define PF_USER    (1 << 2)
+#define PF_RSVD    (1 << 3)
+#define PF_INSTR   (1 << 4)
 
 typedef void (*handler_t)(struct trapframe *tf, void *data);
 

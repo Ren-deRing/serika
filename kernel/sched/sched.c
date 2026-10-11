@@ -259,6 +259,18 @@ static struct runqueue *task_rq_lock(struct task *t, uint64_t *flags) {
     }
 }
 
+/* t is running on another cpu: an ipi brings it into the kernel, and back out through the signal check */
+void sched_kick(struct task *t) {
+    uint64_t flags;
+    struct runqueue *rq = task_rq_lock(t, &flags);
+
+    bool kick = rq->curr == t && rq->cpu != curcpu->id;
+
+    spin_unlock_irqrestore(&rq->lock, flags);
+
+    if (kick) intc_send_ipi(cpus[rq->cpu].hw_id, RESCHED_VECTOR);
+}
+
 /* a sleeper gets half a latency of credit at most */
 static void place_wakeup(struct runqueue *rq, struct task *t) {
     uint64_t credit = us_to_tsc(SCHED_LATENCY_US) / 2;

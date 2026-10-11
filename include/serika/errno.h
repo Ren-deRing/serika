@@ -132,3 +132,6 @@
 #define ERFKILL         132    /* Operation not possible due to RF-kill */
 #define EHWPOISON       133    /* Memory page has hardware error */
 #define ENOTSUP         134    /* Not supported parameter or option */
+
+/* kernel only: never reaches user */
+#define ERESTARTSYS     512    /* restart if the handler has SA_RESTART, else EINTR */

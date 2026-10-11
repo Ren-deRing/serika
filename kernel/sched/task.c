@@ -13,11 +13,27 @@
 #include <serika/string.h>
 #include <serika/syscall.h>
 #include <serika/vfs.h>
+#include <serika/signal.h>
 #include <serika/wait.h>
 
 static volatile uint64_t next_id = 0;
 
-static spinlock_t tasklist_lock = SPINLOCK_INITIALIZER; /* parent, children, sibling. irqsave */
+static spinlock_t tasklist_lock = SPINLOCK_INITIALIZER; /* parent, children, sibling, pid_hash. irqsave */
+
+/* user tasks by id, for kill(). a task found under tasklist_lock is not freed before it is dropped */
+#define PID_HASH 256
+
+static struct task *pid_hash[PID_HASH];
+
+/* tasklist_lock held */
+static void pid_hash_del(struct task *task) {
+    for (struct task **p = &pid_hash[task->id % PID_HASH]; *p; p = &(*p)->pid_next) {
+        if (*p == task) {
+            *p = task->pid_next;
+            return;
+        }
+    }
+}
 
 static struct task *task_alloc(task_entry_t entry, int nice) {
     struct task *task = kmalloc(sizeof(struct task));
@@ -63,8 +79,9 @@ struct task *task_create(task_entry_t entry, int nice) {
     return task;
 }
 
-/* not runnable until sched_add_task(). takes mm and files on success, the caller still owns them on failure */
-struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry, uintptr_t user_stack, int nice) {
+/* not runnable until sched_add_task(). takes mm, files and sighand on success, the caller still owns them on failure */
+struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *sighand,
+                            uintptr_t entry, uintptr_t user_stack, int nice) {
     int korder = SIZE_TO_ORDER(TASK_KSTACK_SIZE);
 
     struct task *task = task_alloc((task_entry_t)entry, nice);
@@ -88,11 +105,15 @@ struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry,
     task->mm = mm;
     task->pmap = mm->pmap;
     task->files = files;
+    task->sighand = sighand;
 
     /* creator reaps */
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
     task->parent = current_task();
     list_add_tail(&task->sibling, &task->parent->children);
+
+    task->pid_next = pid_hash[task->id % PID_HASH];
+    pid_hash[task->id % PID_HASH] = task;
     spin_unlock_irqrestore(&tasklist_lock, f);
 
     return task;
@@ -102,14 +123,15 @@ struct task *task_create_mm(struct mm *mm, struct files *files, uintptr_t entry,
 struct task *task_create_user(const void *code, size_t size, int nice) {
     struct mm *mm = mm_create();
     struct files *files = files_create();
+    struct sighand *sighand = sighand_create();
 
-    if (!mm || !files) goto fail;
+    if (!mm || !files || !sighand) goto fail;
 
     if (mm_map(mm, USER_CODE_BASE, ALIGN_UP(size, PAGE_SIZE), PROT_READ | PROT_EXEC) != 0) goto fail;
     if (mm_map(mm, USER_STACK_TOP - USER_STACK_SIZE, USER_STACK_SIZE, PROT_READ | PROT_WRITE) != 0) goto fail;
     if (mm_copy_to(mm, USER_CODE_BASE, code, size) != 0) goto fail;
 
-    struct task *task = task_create_mm(mm, files, USER_CODE_BASE, USER_STACK_TOP, nice);
+    struct task *task = task_create_mm(mm, files, sighand, USER_CODE_BASE, USER_STACK_TOP, nice);
     if (!task) goto fail;
 
     return task;
@@ -117,6 +139,7 @@ struct task *task_create_user(const void *code, size_t size, int nice) {
 fail:
     if (mm) mm_put(mm);
     if (files) files_put(files);
+    if (sighand) sighand_put(sighand);
     return NULL;
 }
 
@@ -126,11 +149,13 @@ struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t us
 
     mm_get(proc->mm);
     files_get(proc->files);
+    sighand_get(proc->sighand);
 
-    struct task *task = task_create_mm(proc->mm, proc->files, entry, user_stack, nice);
+    struct task *task = task_create_mm(proc->mm, proc->files, proc->sighand, entry, user_stack, nice);
     if (!task) {
         mm_put(proc->mm);
         files_put(proc->files);
+        sighand_put(proc->sighand);
     }
 
     return task;
@@ -150,6 +175,15 @@ struct task *task_create_boot(void) {
 
 /* a task that ran dropped its files in task_exit() */
 void task_free(struct task *task) {
+    /* kill() can't find it from here on */
+    if (task->sighand) {
+        uint64_t f = spin_lock_irqsave(&tasklist_lock);
+        pid_hash_del(task);
+        spin_unlock_irqrestore(&tasklist_lock, f);
+
+        sighand_put(task->sighand);
+    }
+
     if (task->mm) mm_put(task->mm);
     if (task->files) files_put(task->files);
 
@@ -181,8 +215,11 @@ void task_dead(struct task *task) {
     struct task *parent = task->parent;
 
     if (parent) {
+        struct ksiginfo info = { .signo = SIGCHLD, .code = CLD_EXITED, .pid = task->id };
+
         task->state = TASK_ZOMBIE;
         wake_up(&parent->wait_chldexit);
+        send_signal(parent, SIGCHLD, &info); /* a kthread parent takes none */
     }
 
     spin_unlock_irqrestore(&tasklist_lock, f);
@@ -254,8 +291,25 @@ long task_wait(struct task *child, long *status, int options) {
 
     if (options & WNOHANG) return reap_child(curr, child, status);
 
-    wait_event(curr->wait_chldexit, (ret = reap_child(curr, child, status)) != 0);
-    return ret;
+    /* a signal ends the wait: -ERESTARTSYS, which the way back to user turns into a restart or -EINTR */
+    int err = wait_event_interruptible(curr->wait_chldexit, (ret = reap_child(curr, child, status)) != 0);
+    return err ? err : ret;
+}
+
+int task_signal(long pid, int sig, const struct ksiginfo *info) {
+    int err = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    for (struct task *t = pid_hash[pid % PID_HASH]; t; t = t->pid_next) {
+        if ((long)t->id == pid) {
+            err = sig ? send_signal(t, sig, info) : 0;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return err;
 }
 
 void task_exit(long code) {

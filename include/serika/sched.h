@@ -61,6 +61,7 @@ void finish_task_switch(void);
 
 /* never with an rq lock held */
 bool wake_up_process(struct task *t);
+void sched_kick(struct task *t);
 
 void sched_init(void);
 void sched_tick(void);

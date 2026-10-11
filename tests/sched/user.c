@@ -3,6 +3,7 @@
 #include <serika/errno.h>
 #include <serika/mm.h>
 #include <serika/sched.h>
+#include <serika/signal.h>
 #include <serika/syscall.h>
 
 #include <asm/arch.h>
@@ -74,7 +75,7 @@ bool test_user_fault() {
     TEST_ASSERT(run_user(segv_code, sizeof(segv_code), &status) > 0);
     TEST_ASSERT(status == 11);
 
-    /* other exceptions kill the task too, with linux's signal */
+    /* other exceptions kill the task too */
     TEST_ASSERT(run_user(ud2_code, sizeof(ud2_code), &status) > 0);
     TEST_ASSERT(status == 4);  /* SIGILL */
 
@@ -238,5 +239,29 @@ bool test_user_thread() {
     TEST_ASSERT(proc_id > 0 && thread_id > 0);
     TEST_ASSERT(WEXITSTATUS(proc_status) == 0x5e);
     TEST_ASSERT(WEXITSTATUS(thread_status) == 0);
+    return true;
+}
+
+static const uint8_t spin_code[] = { 0xeb, 0xfe }; /* jmp . */
+
+/* running in user mode on some cpu: only an ipi brings it into the kernel to die */
+bool test_user_kill() {
+    struct task *t = task_create_user(spin_code, sizeof(spin_code), 0);
+    TEST_ASSERT(t);
+    sched_add_task(t);
+
+    uint64_t until = rdtsc() + curcpu->tsc_freq_hz / 20; /* 50ms to start spinning */
+    while (rdtsc() < until) arch_pause();
+
+    struct ksiginfo info = { .signo = SIGKILL, .code = SI_USER };
+    TEST_ASSERT(send_signal(t, SIGKILL, &info) == 0);
+
+    long status = 0, reaped = 0;
+    until = rdtsc() + curcpu->tsc_freq_hz; /* 1s */
+
+    while ((reaped = task_wait(t, &status, WNOHANG)) == 0 && rdtsc() < until) arch_pause();
+
+    TEST_ASSERT(reaped > 0);
+    TEST_ASSERT(status == SIGKILL);
     return true;
 }

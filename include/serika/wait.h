@@ -40,3 +40,25 @@ void wake_up(struct wait_queue *wq); /* wakes every waiter */
                                                 \
         finish_wait(&(wq), &__we);              \
     } while (0)
+
+/* a pending signal ends it too: -ERESTARTSYS. 0 once cond holds */
+#define wait_event_interruptible(wq, cond)                  \
+    ({                                                      \
+        struct wait_entry __we = { 0 };                     \
+        int __ret = 0;                                      \
+                                                            \
+        might_sleep();                                      \
+                                                            \
+        for (;;) {                                          \
+            prepare_to_wait(&(wq), &__we);                  \
+            if (cond) break;                                \
+            if (signal_pending(current_task())) {           \
+                __ret = -ERESTARTSYS;                       \
+                break;                                      \
+            }                                               \
+            schedule();                                     \
+        }                                                   \
+                                                            \
+        finish_wait(&(wq), &__we);                          \
+        __ret;                                              \
+    })

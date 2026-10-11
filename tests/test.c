@@ -29,6 +29,7 @@ static struct test tests[] = {
     { "user task",   test_user_task },
     { "user fault",  test_user_fault },
     { "user thread", test_user_thread },
+    { "user kill",   test_user_kill },
     { "tlb storm",   test_tlb_storm },
     { "tlb mprotect", test_tlb_mprotect },
     { "tlb munmap",  test_tlb_munmap },
@@ -42,6 +43,7 @@ static struct test tests[] = {
     { "exec",        test_exec },
     { "exec glibc",  test_exec_glibc },
     { "exec files",  test_exec_files },
+    { "exec signals", test_exec_signals },
 };
 
 void test_run_all() {
