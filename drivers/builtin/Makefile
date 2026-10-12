@@ -2,6 +2,7 @@ DRIVERS := \
 	block \
 	drm \
 	fb \
+	input \
 	mem \
 	pci \
 	tty \

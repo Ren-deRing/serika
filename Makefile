@@ -182,6 +182,8 @@ run: build
 		-smp 4 \
 		-drive file=$(BUILD_DIR)/disk.img,if=none,id=disk0,format=raw \
 		-device virtio-blk-pci,drive=disk0,disable-legacy=on \
+		-device virtio-keyboard-pci,disable-legacy=on \
+		-device virtio-tablet-pci,disable-legacy=on \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
 #		-S -s
 
