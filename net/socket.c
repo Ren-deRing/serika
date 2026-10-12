@@ -148,6 +148,14 @@ static struct file *sock_file_new(struct usock *sk, uint32_t flags) {
 /* ---- socket, socketpair ---- */
 
 static int check_type(long domain, long type, long protocol) {
+    /* the uevent socket of libudev's monitor, which hears nothing: there are no devices coming and going */
+    if (domain == AF_NETLINK) {
+        if (type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) return -EINVAL;
+        if ((type & SOCK_TYPE_MASK) != SOCK_RAW && (type & SOCK_TYPE_MASK) != SOCK_DGRAM) return -ESOCKTNOSUPPORT;
+
+        return protocol == NETLINK_KOBJECT_UEVENT ? SOCK_DGRAM : -EPROTONOSUPPORT;
+    }
+
     if (domain != AF_UNIX) return -EAFNOSUPPORT;
     if (type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) return -EINVAL;
 
@@ -165,6 +173,8 @@ long sys_socket(long domain, long type, long protocol) {
 
     struct usock *sk = unix_create(t);
     if (!sk) return -ENOMEM;
+
+    sk->netlink = domain == AF_NETLINK;
 
     struct file *f = sock_file_new(sk, type);
     if (!f) return -ENOMEM;
@@ -351,6 +361,11 @@ long sys_bind(long fd, long uaddr, long ulen) {
         return -ENOTSOCK;
     }
 
+    if (sk->netlink) { /* a sockaddr_nl: the groups it would hear are of no use here */
+        vfs_close(f);
+        return 0;
+    }
+
     if ((err = addr_from_user(uaddr, ulen, &a, &path))) goto out;
 
     if (name_of(sk, &(struct unix_addr){ 0 })) {
@@ -494,12 +509,33 @@ long sys_accept(long fd, long uaddr, long ulenp) {
     return sys_accept4(fd, uaddr, ulenp, 0);
 }
 
+/* struct sockaddr_nl: the family, a pad, the port and the groups */
+struct sockaddr_nl_user {
+    uint16_t family;
+    uint16_t pad;
+    uint32_t pid;
+    uint32_t groups;
+};
+
 long sys_getsockname(long fd, long uaddr, long ulenp) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
     struct usock *sk = sock_of(f);
     struct unix_addr a;
+
+    if (sk && sk->netlink) {
+        struct sockaddr_nl_user nl = { .family = AF_NETLINK, .pid = sys_getpid() };
+        int32_t room, total = sizeof(nl);
+        long err = copy_from_user(&room, ulenp, sizeof(room));
+
+        if (!err) err = copy_to_user(uaddr, &nl, room < total ? (size_t)(room > 0 ? room : 0) : sizeof(nl));
+        if (!err) err = copy_to_user(ulenp, &total, sizeof(total));
+
+        vfs_close(f);
+        return err;
+    }
+
     bool named = sk && name_of(sk, &a);
     long err = sk ? addr_to_user(uaddr, ulenp, &a, named) : -ENOTSOCK;
 
@@ -1093,6 +1129,8 @@ long sys_setsockopt(long fd, long level, long name, long uval, long len) {
             } else if (opt_is_flag(name)) {
                 if (v) sk->flags |= 1u << name;
                 else   sk->flags &= ~(1u << name);
+            } else if (sk->netlink && (name == SO_ATTACH_FILTER || name == SO_ATTACH_BPF)) {
+                /* a filter for messages that do not come */
             } else if (name != SO_PRIORITY && name != SO_RCVLOWAT && name != SO_SNDLOWAT) {
                 err = -ENOPROTOOPT;
             }

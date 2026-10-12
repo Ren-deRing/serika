@@ -10,10 +10,13 @@
 
 /* linux's values: this is the abi */
 #define AF_UNIX  1
+#define AF_NETLINK 16
+#define NETLINK_KOBJECT_UEVENT 15
 #define AF_LOCAL 1
 
 #define SOCK_STREAM    1
 #define SOCK_DGRAM     2
+#define SOCK_RAW       3
 #define SOCK_SEQPACKET 5
 #define SOCK_TYPE_MASK 0xf
 #define SOCK_NONBLOCK  04000
@@ -46,6 +49,8 @@
 #define SO_SNDBUFFORCE 32
 #define SO_RCVBUFFORCE 33
 #define SO_PASSSEC    34
+#define SO_ATTACH_FILTER 26
+#define SO_ATTACH_BPF    50
 #define SO_PROTOCOL   38
 #define SO_DOMAIN     39
 
@@ -142,6 +147,7 @@ struct usock {
 
     bool             dead;       /* its last file closed */
     bool             listening;
+    bool             netlink;    /* an AF_NETLINK uevent socket, which nothing is ever sent on: libudev's monitor */
     bool             has_addr;
     bool             abstract;
     struct unix_addr addr;
