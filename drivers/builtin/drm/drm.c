@@ -185,6 +185,12 @@ static long drm_ioctl(struct file *f, unsigned long cmd, unsigned long arg) {
         case DRM_IOCTL_MODE_CREATE_DUMB:    return drm_create_dumb(file, arg);
         case DRM_IOCTL_MODE_MAP_DUMB:       return drm_map_dumb(file, arg);
         case DRM_IOCTL_MODE_DESTROY_DUMB:   return drm_destroy_dumb(file, arg);
+
+        /* no leases: a program that asks (wlroots, before it opens the node again) is told so */
+        case DRM_IOCTL_MODE_CREATE_LEASE:
+        case DRM_IOCTL_MODE_LIST_LESSEES:
+        case DRM_IOCTL_MODE_GET_LEASE:
+        case DRM_IOCTL_MODE_REVOKE_LEASE:   return -EOPNOTSUPP;
     }
 
     return drm_kms_ioctl(file, cmd, arg);

@@ -32,6 +32,7 @@
 #define DRM_MODE_PROP_IMMUTABLE  (1 << 2)
 #define DRM_MODE_PROP_ENUM       (1 << 3)
 
+#define DRM_MODE_OBJECT_ANY       0
 #define DRM_MODE_OBJECT_CRTC      0xcccccccc
 #define DRM_MODE_OBJECT_CONNECTOR 0xc0c0c0c0
 #define DRM_MODE_OBJECT_ENCODER   0xe0e0e0e0
@@ -171,6 +172,15 @@ static long fb_add(struct drm_file *file, uint32_t handle, uint32_t width, uint3
     return 0;
 }
 
+/* what the crtc shows. a framebuffer that was closed while it was shown goes now that it is not. lock held */
+static void crtc_set_fb(struct drm_dev *d, struct drm_fb *fb) {
+    struct drm_fb *old = d->crtc_fb;
+
+    d->crtc_fb = fb;
+
+    if (old && old != fb && old->closed) fb_free(old);
+}
+
 /* a framebuffer that goes while it is shown leaves the crtc without one. lock held */
 static void fb_remove(struct drm_fb *fb) {
     list_del(&fb->node);
@@ -178,6 +188,18 @@ static void fb_remove(struct drm_fb *fb) {
     if (drm_dev.crtc_fb == fb) drm_dev.crtc_fb = NULL;
 
     fb_free(fb);
+}
+
+/* the program lets go of it and the screen does not: it stays up until the crtc shows another. lock held */
+static void fb_close(struct drm_fb *fb) {
+    if (drm_dev.crtc_fb != fb) {
+        fb_remove(fb);
+        return;
+    }
+
+    list_del(&fb->node);
+    fb->owner  = NULL;
+    fb->closed = true;
 }
 
 /* ---- vblank and flips ---- */
@@ -346,7 +368,7 @@ static long set_crtc(uintptr_t arg) {
     long err = 0;
 
     if (!c.fb_id) {
-        d->crtc_fb = NULL;
+        crtc_set_fb(d, NULL);
     } else {
         struct drm_fb *fb = fb_find(c.fb_id);
 
@@ -356,7 +378,7 @@ static long set_crtc(uintptr_t arg) {
         else if (c.x >= fb->width || c.y >= fb->height ||
                  fb->width - c.x < d->mode.hdisplay || fb->height - c.y < d->mode.vdisplay) err = -ENOSPC;
         else {
-            d->crtc_fb = fb;
+            crtc_set_fb(d, fb);
             d->crtc_x  = c.x;
             d->crtc_y  = c.y;
 
@@ -454,6 +476,17 @@ static long obj_get_properties(uintptr_t arg) {
     uint32_t prop = 0;
     uint64_t value = 0;
     uint32_t n = 0;
+
+    /* a program that does not know what the object is (wlroots does not) says any: it is what the id is */
+    if (o.obj_type == DRM_MODE_OBJECT_ANY) {
+        switch (o.obj_id) {
+            case DRM_CRTC_ID:      o.obj_type = DRM_MODE_OBJECT_CRTC; break;
+            case DRM_ENCODER_ID:   o.obj_type = DRM_MODE_OBJECT_ENCODER; break;
+            case DRM_CONNECTOR_ID: o.obj_type = DRM_MODE_OBJECT_CONNECTOR; break;
+            case DRM_PLANE_ID:     o.obj_type = DRM_MODE_OBJECT_PLANE; break;
+            default:               return -ENOENT;
+        }
+    }
 
     if (o.obj_type == DRM_MODE_OBJECT_CONNECTOR && o.obj_id == DRM_CONNECTOR_ID) {
         prop = DRM_PROP_DPMS;
@@ -594,6 +627,24 @@ static long rm_fb(struct drm_file *file, uintptr_t arg) {
     return err;
 }
 
+/* struct drm_mode_closefb */
+static long close_fb(struct drm_file *file, uintptr_t arg) {
+    uint32_t a[2];
+
+    if (copy_from_user(a, arg, sizeof(a)) != 0) return -EFAULT;
+    if (a[1]) return -EINVAL; /* flags: none are defined */
+
+    mutex_lock(&drm_dev.lock);
+
+    struct drm_fb *fb = fb_find(a[0]);
+    long err = !fb ? -ENOENT : fb->owner != file ? -ENOENT : 0;
+
+    if (!err) fb_close(fb);
+
+    mutex_unlock(&drm_dev.lock);
+    return err;
+}
+
 static long get_fb(struct drm_file *file, uintptr_t arg) {
     struct drm_mode_fb_cmd a;
 
@@ -660,7 +711,7 @@ static long page_flip(struct drm_file *file, uintptr_t arg) {
     else if (__atomic_load_n(&d->flip_pending, __ATOMIC_ACQUIRE)) err = -EBUSY;
 
     if (!err) {
-        d->crtc_fb = fb;
+        crtc_set_fb(d, fb);
         d->crtc_x = d->crtc_y = 0;
 
         present(d);
@@ -687,6 +738,24 @@ static long page_flip(struct drm_file *file, uintptr_t arg) {
     return err;
 }
 
+#define DRM_MODE_CURSOR_BO   0x01
+#define DRM_MODE_CURSOR_MOVE 0x02
+
+/* there is no hardware cursor: hiding it and moving it are done (a program does both after a modeset, and takes
+ * a failure of them for a failure of the modeset), and a picture for it is not taken */
+static long cursor(unsigned long cmd, uintptr_t arg) {
+    struct drm_mode_cursor c;
+
+    /* cursor2 is the same and two more numbers */
+    if (copy_from_user(&c, arg, sizeof(c)) != 0) return -EFAULT;
+    if (c.crtc_id != DRM_CRTC_ID) return -ENOENT;
+
+    (void)cmd;
+
+    if ((c.flags & DRM_MODE_CURSOR_BO) && c.handle) return -ENXIO;
+    return 0;
+}
+
 long drm_kms_ioctl(struct drm_file *file, unsigned long cmd, uintptr_t arg) {
     switch (cmd) {
         case DRM_IOCTL_MODE_GETRESOURCES:     return get_resources(file, arg);
@@ -703,13 +772,14 @@ long drm_kms_ioctl(struct drm_file *file, unsigned long cmd, uintptr_t arg) {
         case DRM_IOCTL_MODE_ADDFB:            return add_fb(file, arg);
         case DRM_IOCTL_MODE_ADDFB2:           return add_fb2(file, arg);
         case DRM_IOCTL_MODE_RMFB:             return rm_fb(file, arg);
+        case DRM_IOCTL_MODE_CLOSEFB:          return close_fb(file, arg);
         case DRM_IOCTL_MODE_GETFB:            return get_fb(file, arg);
         case DRM_IOCTL_MODE_DIRTYFB:          return dirty_fb(arg);
         case DRM_IOCTL_MODE_PAGE_FLIP:        return page_flip(file, arg);
 
         /* no cursor and no overlay: a program that has a software cursor and the primary plane only */
         case DRM_IOCTL_MODE_CURSOR:
-        case DRM_IOCTL_MODE_CURSOR2:          return -ENXIO;
+        case DRM_IOCTL_MODE_CURSOR2:          return cursor(cmd, arg);
         case DRM_IOCTL_MODE_SETPLANE:         return -EINVAL;
     }
 

@@ -72,6 +72,13 @@
 #define DRM_IOCTL_MODE_OBJ_SETPROPERTY   DRM_IOWR(0xBA, struct drm_mode_obj_set_property)
 #define DRM_IOCTL_MODE_CURSOR2           DRM_IOWR(0xBB, struct drm_mode_cursor2)
 
+/* leases: struct drm_mode_create_lease is 24 bytes, drm_mode_list_lessees, get_lease and revoke_lease 16, 16 and 4 */
+#define DRM_IOCTL_MODE_CLOSEFB           DRM_IOC(3u, 0xD0, 8) /* struct drm_mode_closefb: fb_id and flags */
+#define DRM_IOCTL_MODE_CREATE_LEASE      DRM_IOC(3u, 0xC6, 24)
+#define DRM_IOCTL_MODE_LIST_LESSEES      DRM_IOC(3u, 0xC7, 16)
+#define DRM_IOCTL_MODE_GET_LEASE         DRM_IOC(3u, 0xC8, 16)
+#define DRM_IOCTL_MODE_REVOKE_LEASE      DRM_IOC(3u, 0xC9, 4)
+
 /* a buffer: pages of its own, not contiguous. mapped by a program through the fake offset, shared as a dma-buf */
 struct drm_bo {
     uint32_t    refs;      /* atomic. a handle, a dma-buf, a framebuffer */
@@ -95,6 +102,7 @@ struct drm_fb {
     struct drm_file  *owner;
     struct drm_bo    *bo;
     uint32_t          width, height, pitch, format;
+    bool              closed; /* closed by its owner while shown: it goes when something else is */
 };
 
 struct drm_event_node {
