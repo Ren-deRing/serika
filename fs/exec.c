@@ -446,8 +446,8 @@ static int copy_strings(uintptr_t uvec, char *area, size_t *used, const char ***
 long sys_execve(long upath, long uargv, long uenvp) {
     struct task *curr = current_task();
 
-    /* threads come later: there is one task to replace, and nobody else on the mm */
-    if (__atomic_load_n(&curr->mm->users, 2) != 1 || __atomic_load_n(&curr->sighand->users, 2) != 1) /* __ATOMIC_ACQUIRE */
+    /* one task to replace. the mm may be shared with a parent that waits in vfork: this task only leaves it */
+    if (__atomic_load_n(&curr->group->live, 2) != 1 || __atomic_load_n(&curr->sighand->users, 2) != 1) /* __ATOMIC_ACQUIRE */
         return -EBUSY;
 
     char *path;

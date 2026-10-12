@@ -17,6 +17,10 @@ void timer_add(struct timer *t);
 bool timer_del(struct timer *t); /* true if it had not fired. a running fn is over once this returns */
 void timer_tick(void);           /* cpu 0's tick */
 
+void time_init(void);                /* after cpu_init() */
+uint64_t realtime_ns(void);          /* since 1970 */
+uint64_t realtime_to_tsc(uint64_t t);
+
 long sleep_until(uint64_t deadline); /* tsc. a signal ends it early: -EINTR */
 
 /* a user struct timespec as a tsc count */

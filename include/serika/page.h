@@ -18,7 +18,6 @@
 
 #define PFN_TO_PHYS(pfn)     ((pfn) << PAGE_SHIFT)
 #define PHYS_TO_PFN(addr)    ((addr) >> PAGE_SHIFT)
-#define BUDDY_POOL_START_PFN 0x8000ULL
 
 #define PAGE_SHIFT_HUGE 21
 #define PAGE_SIZE_HUGE  (1ULL << PAGE_SHIFT_HUGE)

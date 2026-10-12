@@ -58,6 +58,9 @@
 #define SYS_FCHOWN           93
 #define SYS_LCHOWN           94
 #define SYS_UMASK            95
+#define SYS_GETTIMEOFDAY     96
+#define SYS_GETRUSAGE        98
+#define SYS_SYSINFO          99
 #define SYS_GETUID          102
 #define SYS_GETGID          104
 #define SYS_SETUID          105
@@ -76,6 +79,7 @@
 #define SYS_SYNC            162
 #define SYS_GETTID          186
 #define SYS_TKILL           200
+#define SYS_TIME            201
 #define SYS_FUTEX           202
 #define SYS_GETDENTS64      217
 #define SYS_SET_TID_ADDRESS 218
@@ -160,6 +164,8 @@ long sys_getuid(void);
 long sys_setuid(long id);
 long sys_uname(long ubuf);
 long sys_prlimit64(long pid, long resource, long unew, long uold);
+long sys_sysinfo(long ubuf);
+long sys_getrusage(long who, long ubuf);
 
 /* fs/select.c */
 long sys_poll(long ufds, long nfds, long timeout_ms);
@@ -168,6 +174,8 @@ long sys_select(long n, long ur, long uw, long ue, long utv);
 long sys_pselect6(long n, long ur, long uw, long ue, long utsp, long usig);
 
 /* kernel/time.c */
+long sys_gettimeofday(long utv, long utz);
+long sys_time(long utloc);
 long sys_clock_gettime(long clk, long utp);
 long sys_nanosleep(long ureq, long urem);
 long sys_clock_nanosleep(long clk, long flags, long ureq, long urem);

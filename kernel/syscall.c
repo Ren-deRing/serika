@@ -150,6 +150,10 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_MKDIR:           return sys_mkdirat(AT_FDCWD, args[0], args[1]);
         case SYS_SYMLINK:         return sys_symlinkat(args[0], AT_FDCWD, args[1]);
         case SYS_READLINK:        return sys_readlinkat(AT_FDCWD, args[0], args[1], args[2]);
+        case SYS_GETTIMEOFDAY:    return sys_gettimeofday(args[0], args[1]);
+        case SYS_TIME:            return sys_time(args[0]);
+        case SYS_GETRUSAGE:       return sys_getrusage((int)args[0], args[1]);
+        case SYS_SYSINFO:         return sys_sysinfo(args[0]);
         case SYS_UMASK:           return sys_umask(args[0]);
         case SYS_GETUID:
         case SYS_GETGID:

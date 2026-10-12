@@ -196,14 +196,63 @@ struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *
     return task;
 }
 
-/* clone without CLONE_VM: a copy of the caller that returns 0 from the same system call. not runnable yet */
-int task_fork(const struct trapframe *tf, struct task **out) {
+struct vfork_done {
+    struct wait_queue wq;
+    volatile bool     done;
+    uint32_t          refs; /* the parent's and the child's. atomic */
+};
+
+struct vfork_done *vfork_alloc(void) {
+    struct vfork_done *vd = kmalloc(sizeof(struct vfork_done));
+    if (!vd) return NULL;
+
+    wait_queue_init(&vd->wq);
+    vd->done = false;
+    vd->refs = 2;
+
+    return vd;
+}
+
+static void vfork_put(struct vfork_done *vd) {
+    if (__atomic_sub_fetch(&vd->refs, 1, 4) == 0) kfree(vd); /* __ATOMIC_ACQ_REL */
+}
+
+void vfork_attach(struct task *child, struct vfork_done *vd) {
+    child->vfork_done = vd;
+}
+
+/* the child never ran */
+void vfork_cancel(struct vfork_done *vd) {
+    kfree(vd);
+}
+
+void vfork_wait(struct vfork_done *vd) {
+    wait_event(vd->wq, vd->done);
+    vfork_put(vd);
+}
+
+/* the child is out of the parent's mm: exec has its own, or it is gone */
+static void vfork_release(struct task *task) {
+    struct vfork_done *vd = task->vfork_done;
+    if (!vd) return;
+
+    task->vfork_done = NULL;
+    vd->done = true;
+    wake_up(&vd->wq);
+    vfork_put(vd);
+}
+
+/* clone without CLONE_THREAD: a copy of the caller that returns 0 from the same system call. not runnable yet.
+ * share_mm: the same address space, not a copy of it, for a parent that waits. clear_sighand: no handlers */
+int task_fork(const struct trapframe *tf, bool share_mm, bool clear_sighand, struct task **out) {
     struct task *curr = current_task();
 
     struct task *task = user_task_alloc(0, curr->nice);
     if (!task) return -ENOMEM;
 
-    struct mm *mm = mm_fork(curr->mm);
+    struct mm *mm = share_mm ? curr->mm : mm_fork(curr->mm);
+    if (share_mm) mm_get(mm);
+
     struct files *files = files_copy(curr->files);
     struct sighand *sighand = sighand_copy(curr->sighand);
     struct tgroup *g = tgroup_alloc(task);
@@ -216,6 +265,8 @@ int task_fork(const struct trapframe *tf, struct task **out) {
         user_task_discard(task);
         return -ENOMEM;
     }
+
+    if (clear_sighand) sighand_reset(sighand);
 
     task->blocked = curr->blocked;
 
@@ -248,6 +299,7 @@ void task_exec_mm(struct mm *mm) {
     arch_irq_restore(flags);
 
     mm_put(old);
+    vfork_release(curr); /* the parent has its mm to itself again */
 }
 
 /* not runnable until sched_add_task() */
@@ -562,6 +614,7 @@ static void exit_mm(struct task *curr) {
     arch_irq_restore(flags);
 
     mm_put(mm);
+    vfork_release(curr);
 }
 
 /* this thread only. the process ends with its last thread */

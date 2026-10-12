@@ -359,6 +359,10 @@ static void fill_stat(struct inode *inode, struct stat *st) {
     st->st_blksize = PAGE_SIZE;
     st->st_blocks  = ALIGN_UP(inode->size, 512) / 512;
 
+    st->st_atime = inode->atime / 1000000000ULL; st->st_atime_nsec = inode->atime % 1000000000ULL;
+    st->st_mtime = inode->mtime / 1000000000ULL; st->st_mtime_nsec = inode->mtime % 1000000000ULL;
+    st->st_ctime = inode->ctime / 1000000000ULL; st->st_ctime_nsec = inode->ctime % 1000000000ULL;
+
     mutex_unlock(&inode->lock);
 }
 
@@ -1045,15 +1049,39 @@ long sys_fsync(long fd) {
     return 0;
 }
 
-/* no timestamps are kept, so there is nothing to set: the file has to be there */
-long sys_utimensat(long dirfd, long upath, long utimes, long flags) {
-    (void)utimes;
+struct utimespec {
+    int64_t sec;
+    int64_t nsec;
+};
 
+/* one of the two times: a point on the clock, or UTIME_NOW, or UTIME_OMIT */
+static int64_t utime_ns(const struct utimespec *t) {
+    if (t->nsec == UTIME_NOW || t->nsec == UTIME_OMIT) return t->nsec;
+    if (t->nsec < 0 || t->nsec >= 1000000000 || t->sec < 0) return -1;
+
+    return t->sec * 1000000000LL + t->nsec;
+}
+
+/* times: two timespecs, access then modification. none: both now */
+long sys_utimensat(long dirfd, long upath, long utimes, long flags) {
+    int64_t atime = UTIME_NOW, mtime = UTIME_NOW;
     struct file *f;
+
+    if (utimes) {
+        struct utimespec t[2];
+
+        if (copy_from_user(t, utimes, sizeof(t)) != 0) return -EFAULT;
+
+        atime = utime_ns(&t[0]);
+        mtime = utime_ns(&t[1]);
+
+        if (atime == -1 || mtime == -1) return -EINVAL;
+    }
 
     int err = file_at(dirfd, upath, flags, &f);
     if (err) return err;
 
+    err = vfs_utimes(f->inode, atime, mtime);
     vfs_close(f);
-    return 0;
+    return err;
 }

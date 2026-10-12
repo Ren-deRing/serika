@@ -30,13 +30,33 @@ struct timespec {
     int64_t tv_nsec;
 };
 
-/* TODO: no rtc yet: realtime is that too */
+/* realtime is the tsc plus this, the epoch at boot in ticks */
+static uint64_t realtime_offset;
+
+void time_init(void) {
+    realtime_offset = rtc_read_epoch() * this_cpu_read(tsc_freq_hz);
+}
+
+/* a point on CLOCK_REALTIME in ticks, as a point on the tsc */
+uint64_t realtime_to_tsc(uint64_t t) {
+    return t > realtime_offset ? t - realtime_offset : 1; /* 0 means no deadline */
+}
+
+uint64_t realtime_ns(void) {
+    uint64_t freq = this_cpu_read(tsc_freq_hz), tsc = rdtsc() + realtime_offset;
+
+    return tsc / freq * NSEC_PER_SEC + tsc % freq * NSEC_PER_SEC / freq;
+}
+
 static int clock_tsc(long clk, uint64_t *tsc) {
     switch (clk) {
         case CLOCK_REALTIME:
+        case CLOCK_REALTIME_COARSE:
+            *tsc = rdtsc() + realtime_offset;
+            return 0;
+
         case CLOCK_MONOTONIC:
         case CLOCK_MONOTONIC_RAW:
-        case CLOCK_REALTIME_COARSE:
         case CLOCK_MONOTONIC_COARSE:
         case CLOCK_BOOTTIME:
             *tsc = rdtsc();
@@ -63,6 +83,30 @@ long sys_clock_gettime(long clk, long utp) {
     };
 
     return copy_to_user(utp, &ts, sizeof(ts));
+}
+
+struct timeval {
+    int64_t tv_sec;
+    int64_t tv_usec;
+};
+
+/* the zone is not kept, as in linux */
+long sys_gettimeofday(long utv, long utz) {
+    (void)utz;
+
+    if (!utv) return 0;
+
+    uint64_t ns = realtime_ns();
+    struct timeval tv = { .tv_sec = ns / NSEC_PER_SEC, .tv_usec = ns % NSEC_PER_SEC / 1000 };
+
+    return copy_to_user(utv, &tv, sizeof(tv));
+}
+
+long sys_time(long utloc) {
+    int64_t sec = realtime_ns() / NSEC_PER_SEC;
+
+    if (utloc && copy_to_user(utloc, &sec, sizeof(sec)) != 0) return -EFAULT;
+    return sec;
 }
 
 /* sorted by expiry. timer_lock, then a wait_queue lock, then an rq lock: fn wakes someone */
@@ -163,8 +207,10 @@ int timespec_to_tsc(long uts, uint64_t *tsc) {
 
     if (ts.tv_sec < 0 || ts.tv_nsec < 0 || (uint64_t)ts.tv_nsec >= NSEC_PER_SEC) return -EINVAL;
 
-    /* a year past now at most, so the sum cannot wrap */
-    if ((uint64_t)ts.tv_sec > 365ULL * 24 * 3600) ts.tv_sec = 365ULL * 24 * 3600;
+    /* as many seconds as half the counter holds, so a sum with the tsc cannot wrap. that is past the epoch of
+     * an absolute CLOCK_REALTIME time, which is why it is not a year */
+    uint64_t max_sec = (~0ULL >> 1) / freq;
+    if ((uint64_t)ts.tv_sec > max_sec) ts.tv_sec = max_sec;
 
     *tsc = ts.tv_sec * freq + ts.tv_nsec * freq / NSEC_PER_SEC;
     return 0;

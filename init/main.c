@@ -6,6 +6,7 @@
 #include <serika/ftrace.h>
 #include <serika/irq.h>
 #include <serika/patch.h>
+#include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/pmap.h>
 #include <serika/printk.h>
@@ -17,6 +18,7 @@
 #include <serika/symbol.h>
 #include <serika/syscall.h>
 #include <serika/tick.h>
+#include <serika/timer.h>
 #include <serika/vfs.h>
 
 #include <asm/acpi.h>
@@ -26,7 +28,7 @@
 /* busybox's sh on the console, and back here once it is done */
 static void run_shell(void) {
     const char *const argv[] = { "sh", NULL };
-    const char *const envp[] = { "PATH=/bin", "HOME=/", "TERM=linux", NULL };
+    const char *const envp[] = { "PATH=/usr/bin:/bin", "HOME=/", "TERM=linux", NULL };
     struct task *shell;
 
     int err = task_create_exec("/bin/sh", argv, envp, 0, &shell);
@@ -55,8 +57,10 @@ notrace void start_init(void) {
 
     cpu_init();
     random_init();
+    time_init();
     buddy_init();
     slab_init();
+    printk("mm: %lu MiB free\n", buddy_free_pages() >> (20 - PAGE_SHIFT));
     pmap_init();
     kmap_init();
 

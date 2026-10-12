@@ -72,7 +72,15 @@ empty, and `nlink` becomes 0, after which `create`, `link` and `symlink` give `E
 name out of the parent. `rename` takes out the new name (a dir over a dir only if it is empty), links the
 inode under it, takes out the old name. A dir moving into itself or below is `EINVAL`, found by walking `..`
 up from the target. A dir's `..` is a counted reference to its parent, changed by `link` when it moves.
-`link` of a dir is `EPERM`. There are no timestamps: `utimensat` only checks the file is there.
+`link` of a dir is `EPERM`.
+
+## Times
+
+An inode has `atime`, `mtime` and `ctime` in nanoseconds since 1970, under its lock. Writes, truncates and
+changes to a dir's entries set `mtime` and `ctime` (`inode_touch()`), `chmod` and `link` set `ctime`,
+`utimensat` sets them as asked (`UTIME_NOW`, `UTIME_OMIT`). Reads do not touch `atime`. `CLOCK_REALTIME`
+is the tsc plus the epoch read from the CMOS clock at boot (`time_init()`), which qemu sets to the host's
+UTC; there is no timezone, no leap seconds, and nothing keeps it in step with the host after boot.
 
 `/dev` is made in `vfs_init()`: the tty (`console`, `tty`, `ttyS0`) and `null`, `zero`, `full`, `random`,
 `urandom` from `drivers/builtin/mem/`. `inode->rdev` is what `stat` shows.

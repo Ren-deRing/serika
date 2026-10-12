@@ -22,6 +22,7 @@ typedef struct {
     uintptr_t    mem_start;
     uintptr_t    mem_end;
     size_t       free_pages;
+    size_t       managed_pages; /* what it started with */
 } buddy_t;
 
 
@@ -171,8 +172,6 @@ void buddy_init() {
 
     memset(g_buddy.mmap, 0, array_size);
 
-    uintptr_t pool_start = PFN_TO_PHYS(BUDDY_POOL_START_PFN);
-
     for (uint32_t i = 0; i < length; i++) {
         if (mmap[i].type == MMAP_FREE) {
             uintptr_t start_addr = ALIGN_UP(mmap[i].base, PAGE_SIZE);
@@ -186,14 +185,8 @@ void buddy_init() {
 
             uintptr_t curr_addr = start_addr;
             while (curr_addr < end_addr) {
-                /* Do not touch frames */
-                if (curr_addr >= pool_start) {
-                    curr_addr = end_addr;
-                    break;
-                }
-
                 /* 
-                    Skip the memory map area and pool_start
+                    Skip the memory map area
                     array_phys =< curr_addr < array_end
                 */
                 if (curr_addr >= array_phys && curr_addr < array_end) {
@@ -203,7 +196,6 @@ void buddy_init() {
                 uintptr_t limit = end_addr;
                 /* curr_addr < array_phys < end_addr */
                 if (curr_addr < array_phys && array_phys < end_addr) limit = array_phys;
-                if (limit > pool_start) limit = pool_start; /* limit <= pool_start */
 
                 size_t remain = limit - curr_addr;
                 int target_order = 0;
@@ -224,9 +216,19 @@ void buddy_init() {
                 list_add_tail(&pg->page_list, &g_buddy.orders[target_order].free_list);
                 g_buddy.orders[target_order].free_count++;
                 g_buddy.free_pages += 1ULL << target_order;
+                g_buddy.managed_pages += 1ULL << target_order;
 
                 curr_addr += ORDER_TO_SIZE(target_order);
             }
         }
     }
+}
+
+/* a count, not a promise: it moves as it is read */
+size_t buddy_free_pages(void) {
+    return __atomic_load_n(&g_buddy.free_pages, 0); /* __ATOMIC_RELAXED */
+}
+
+size_t buddy_managed_pages(void) {
+    return g_buddy.managed_pages;
 }

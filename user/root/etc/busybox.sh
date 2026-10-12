@@ -1,7 +1,7 @@
 # run by the test. a failed check exits with its number
 fail() { echo "busybox: check $1 failed"; exit "$1"; }
 
-mkdir /tmp || fail 1
+mkdir -p /tmp || fail 1
 echo hello > /tmp/a || fail 2
 [ "$(cat /tmp/a)" = hello ] || fail 3
 

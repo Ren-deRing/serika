@@ -5,6 +5,7 @@
 #include <serika/slab.h>
 #include <serika/stat.h>
 #include <serika/string.h>
+#include <serika/timer.h>
 #include <serika/vfs.h>
 
 struct inode *vfs_root;
@@ -47,7 +48,13 @@ struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
     inode->ops  = ops;
     mutex_init(&inode->lock);
 
+    inode->atime = inode->mtime = inode->ctime = realtime_ns();
+
     return inode;
+}
+
+void inode_touch(struct inode *inode) {
+    inode->mtime = inode->ctime = realtime_ns();
 }
 
 void iget(struct inode *inode) {
@@ -280,6 +287,7 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
     if (!err && (flags & O_TRUNC) && S_ISREG(inode->mode) && (flags & O_ACCMODE) != O_RDONLY) {
         mutex_lock(&inode->lock);
         err = inode->ops->truncate ? inode->ops->truncate(inode, 0) : -EINVAL;
+        if (!err) inode_touch(inode);
         mutex_unlock(&inode->lock);
     }
 
@@ -605,6 +613,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
 int vfs_chmod(struct inode *inode, uint32_t mode) {
     mutex_lock(&inode->lock);
     inode->mode = (inode->mode & S_IFMT) | (mode & 07777);
+    inode->ctime = realtime_ns();
     mutex_unlock(&inode->lock);
 
     return 0;
@@ -616,9 +625,24 @@ int vfs_truncate(struct inode *inode, uint64_t size) {
 
     mutex_lock(&inode->lock);
     int err = inode->ops->truncate(inode, size);
+    if (!err) inode_touch(inode);
     mutex_unlock(&inode->lock);
 
     return err;
+}
+
+int vfs_utimes(struct inode *inode, int64_t atime_ns, int64_t mtime_ns) {
+    mutex_lock(&inode->lock);
+
+    uint64_t now = realtime_ns();
+
+    if (atime_ns != UTIME_OMIT) inode->atime = atime_ns == UTIME_NOW ? now : (uint64_t)atime_ns;
+    if (mtime_ns != UTIME_OMIT) inode->mtime = mtime_ns == UTIME_NOW ? now : (uint64_t)mtime_ns;
+
+    inode->ctime = now;
+
+    mutex_unlock(&inode->lock);
+    return 0;
 }
 
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
@@ -650,6 +674,8 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
 
     uint64_t at = (f->flags & O_APPEND) ? inode->size : *pos;
     long r = (at + n < at) ? -EFBIG : inode->ops->write(inode, buf, n, at);
+
+    if (r > 0) inode_touch(inode);
 
     mutex_unlock(&inode->lock);
 

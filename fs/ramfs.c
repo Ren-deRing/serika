@@ -103,6 +103,7 @@ static int ramfs_create(struct inode *dir, const char *name, size_t len, uint32_
     list_add_tail(&d->node, &node_of(dir)->entries);
 
     if (S_ISDIR(mode)) dir->nlink++;
+    inode_touch(dir);
 
     iget(inode);
     *out = inode;
@@ -132,6 +133,7 @@ static int ramfs_symlink(struct inode *dir, const char *name, size_t len, const 
     d->len   = len;
     memcpy(d->name, name, len);
     list_add_tail(&d->node, &node_of(dir)->entries);
+    inode_touch(dir);
 
     iget(inode);
     *out = inode;
@@ -160,6 +162,8 @@ static int ramfs_link(struct inode *dir, const char *name, size_t len, struct in
     list_add_tail(&d->node, &node_of(dir)->entries);
 
     inode->nlink++;
+    inode_touch(dir);
+    inode->ctime = dir->mtime;
 
     /* a dir moved here: its .. is this one now. the old one's reference is let go with the caller's still on it */
     if (S_ISDIR(inode->mode)) {
@@ -187,6 +191,7 @@ static int ramfs_unlink(struct inode *dir, const char *name, size_t len, struct 
         kfree(d);
 
         if (S_ISDIR(inode->mode)) dir->nlink--; /* its .. */
+        inode_touch(dir);
         return 0;
     }
 

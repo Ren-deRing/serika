@@ -20,3 +20,5 @@ void* alloc_pages(int order);
 void free_pages(void* addr, int order);
 
 void buddy_init();
+size_t buddy_free_pages(void);
+size_t buddy_managed_pages(void);

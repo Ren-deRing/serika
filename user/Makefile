@@ -11,6 +11,10 @@ EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/l
 APPLETS := $(BUILD_DIR)/applets.stamp
 EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS)
 
+# the host's gcc, to compile and link on serika itself
+TOOLCHAIN := $(BUILD_DIR)/toolchain.stamp
+EXEC      += $(TOOLCHAIN)
+
 .PHONY: all $(INITRD)
 
 all: $(INITRD)
@@ -28,6 +32,11 @@ $(INITRD_DIR)/bin/busybox: /usr/bin/busybox
 $(APPLETS): $(INITRD_DIR)/bin/busybox
 	@echo "LN    : busybox applets"
 	@for a in $$($< --list); do ln -sf busybox $(INITRD_DIR)/bin/$$a; done
+	@touch $@
+
+$(TOOLCHAIN): toolchain.sh /usr/bin/gcc
+	@echo "TOOLCH: gcc"
+	@./toolchain.sh $(INITRD_DIR)
 	@touch $@
 
 $(INITRD_DIR)/lib64/%: /lib64/%

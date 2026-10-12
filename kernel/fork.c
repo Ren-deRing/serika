@@ -1,6 +1,7 @@
 #include <serika/cpu.h>
 #include <serika/errno.h>
 #include <serika/mm.h>
+#include <serika/preempt.h>
 #include <serika/printk.h>
 #include <serika/sched.h>
 #include <serika/signal.h>
@@ -24,12 +25,13 @@
 #define CLONE_PARENT_SETTID  0x00100000
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID   0x01000000
+#define CLONE_CLEAR_SIGHAND  0x100000000ULL /* clone3 only */
 
 /* a thread shares all of these. no cwd yet: CLONE_FS has nothing to share */
 #define CLONE_THREAD_NEEDS (CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD)
 
-/* sharing without being a thread, and vfork's wait: not yet */
-#define CLONE_UNSUPPORTED (CLONE_VFORK | CLONE_PARENT)
+/* sharing without being a thread: not yet. the mm only goes to a parent that waits for the child to leave it */
+#define CLONE_UNSUPPORTED (CLONE_PARENT)
 
 /* x86_64's order: flags, stack, parent_tid, child_tid, tls. glibc's fork() comes here too */
 long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
@@ -37,10 +39,14 @@ long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
     struct task *child;
 
     bool thread = flags & CLONE_THREAD;
+    bool vfork = flags & CLONE_VFORK;
 
-    /* a thread: all of it shared, no exit signal, its own stack. a process: none of it shared */
-    bool ok = thread ? (flags & CLONE_THREAD_NEEDS) == CLONE_THREAD_NEEDS && !(flags & CSIGNAL) && newsp
-                     : !(flags & CLONE_THREAD_NEEDS) && (!(flags & CSIGNAL) || (flags & CSIGNAL) == SIGCHLD);
+    /* a thread: all of it shared, no exit signal, its own stack. a process: only its mm, and then only while
+     * the parent waits (vfork), nothing else */
+    bool ok = thread ? (flags & CLONE_THREAD_NEEDS) == CLONE_THREAD_NEEDS && !(flags & CSIGNAL) && newsp && !vfork
+                                                                                && !(flags & CLONE_CLEAR_SIGHAND)
+                     : !(flags & (CLONE_FILES | CLONE_SIGHAND)) && (!(flags & CLONE_VM) || vfork)
+                       && (!(flags & CSIGNAL) || (flags & CSIGNAL) == SIGCHLD);
 
     if (!ok || (flags & CLONE_UNSUPPORTED)) {
         printk("syscall: clone flags 0x%lx not supported -- task %lu\n", flags, curr->id);
@@ -49,8 +55,17 @@ long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
 
     if ((flags & CLONE_SETTLS) && (uint64_t)tls >= USER_SPACE_END) return -EPERM;
 
-    int err = thread ? task_clone_thread(curr->tf, &child) : task_fork(curr->tf, &child);
-    if (err) return err;
+    struct vfork_done *vd = vfork ? vfork_alloc() : NULL;
+    if (vfork && !vd) return -ENOMEM;
+
+    int err = thread ? task_clone_thread(curr->tf, &child)
+                     : task_fork(curr->tf, flags & CLONE_VM, flags & CLONE_CLEAR_SIGHAND, &child);
+    if (err) {
+        if (vd) vfork_cancel(vd);
+        return err;
+    }
+
+    if (vd) vfork_attach(child, vd);
 
     if (newsp) child->tf->rsp = newsp;
     if (flags & CLONE_SETTLS) child->arch.fs_base = tls;
@@ -65,6 +80,10 @@ long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
     if (flags & CLONE_CHILD_CLEARTID) child->clear_child_tid = ctid;
 
     sched_add_task(child);
+
+    /* until the child execs or exits: it runs on our memory */
+    if (vd) vfork_wait(vd);
+
     return pid;
 }
 

@@ -34,15 +34,18 @@ struct sighand *sighand_copy(struct sighand *old) {
 }
 
 /* execve: the new program has none of the old one's functions. what was ignored stays ignored */
-void signal_exec_reset(void) {
-    struct sighand *sh = current_task()->sighand;
-
+/* every handler back to the default, except what is ignored */
+void sighand_reset(struct sighand *sh) {
     uint64_t flags = spin_lock_irqsave(&sh->lock);
 
     for (int i = 0; i < NSIG; i++)
         if (sh->action[i].handler != SIG_IGN) sh->action[i] = (struct k_sigaction){ .handler = SIG_DFL };
 
     spin_unlock_irqrestore(&sh->lock, flags);
+}
+
+void signal_exec_reset(void) {
+    sighand_reset(current_task()->sighand);
 }
 
 void sighand_get(struct sighand *sh) {

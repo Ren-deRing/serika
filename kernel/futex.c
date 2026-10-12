@@ -321,8 +321,9 @@ long sys_futex(long uaddr, long op, long val, long utime, long uaddr2, long val3
                 int err = timespec_to_tsc(utime, &t);
                 if (err) return err;
 
-                /* WAIT counts from now, WAIT_BITSET to a point on the clock. both clocks are the tsc */
-                deadline = cmd == FUTEX_WAIT ? rdtsc() + t : t;
+                /* WAIT counts from now, WAIT_BITSET to a point on the clock: the monotonic one is the tsc, the
+                 * realtime one is that plus the epoch at boot */
+                deadline = cmd == FUTEX_WAIT ? rdtsc() + t : (op & FUTEX_CLOCK_REALTIME) ? realtime_to_tsc(t) : t;
                 if (!deadline) deadline = 1;
             }
 

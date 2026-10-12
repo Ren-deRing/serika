@@ -126,6 +126,12 @@ leader's id. `tasklist_lock` covers the group's thread list, its count of live t
   children, into a group of the session or a new one named by the process's own id; `setsid()` is
   refused for a group's leader. `kill(0)`, `kill(-pgid)`, `wait4(0)` and `wait4(-pgid)` work on
   them, and `task_signal_pgrp()` walks the pid hash for the leaders in a group.
+- `clone(CLONE_VM | CLONE_VFORK)` (what `posix_spawn` and `vfork` do) makes a process that runs on its
+  parent's mm: `task_fork()` takes a reference instead of copying, and the parent sleeps in
+  `vfork_wait()` until the child execs (`task_exec_mm()`) or exits (`exit_mm()`), either of which calls
+  `vfork_release()`. The `vfork_done` is shared and counted, so it outlives whichever side lets go last.
+  The wait is not interruptible. `execve` needs the process to be one thread (`group->live == 1`), not
+  the mm to have one user. `CLONE_CLEAR_SIGHAND` (clone3) resets the child's handlers.
 - Each thread drops its mm on the way out (`exit_mm()`): off its cr3 first, then the put. A
   zombie holds no address space.
 

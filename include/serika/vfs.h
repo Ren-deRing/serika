@@ -39,6 +39,9 @@ struct inode {
     uint32_t     mode;  /* S_IF* | permissions */
     uint32_t     nlink;
     uint32_t     rdev;  /* a device: major << 8 | minor */
+    uint64_t     atime; /* ns since 1970. lock. reads do not update it */
+    uint64_t     mtime;
+    uint64_t     ctime;
     uint64_t     size;  /* lock */
     uint32_t     refs;  /* atomic */
 
@@ -95,6 +98,13 @@ int  vfs_link(const char *oldpath, const char *newpath); /* a hard link */
 int  vfs_chmod(struct inode *inode, uint32_t mode);
 int  vfs_truncate(struct inode *inode, uint64_t size);
 long vfs_readlink(struct inode *inode, char *buf, size_t n);
+void inode_touch(struct inode *inode); /* its data or entries changed: mtime and ctime, lock held */
+
+#define UTIME_NOW  ((1L << 30) - 1)
+#define UTIME_OMIT ((1L << 30) - 2)
+
+/* utimensat: ns since 1970, or UTIME_NOW or UTIME_OMIT for either */
+int  vfs_utimes(struct inode *inode, int64_t atime_ns, int64_t mtime_ns);
 int  vfs_link_inode(const char *path, struct inode *inode); /* /dev nodes: a name in a dir */
 
 /* one linux_dirent64 into buf. its size, 0 if n is too small */

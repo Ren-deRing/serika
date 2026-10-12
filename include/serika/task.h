@@ -28,6 +28,7 @@ enum task_state {
 };
 
 struct task;
+struct vfork_done;
 
 struct tgroup {
     uint32_t     users;     /* tasks pointing at it, atomic */
@@ -93,6 +94,7 @@ struct task {
 
     struct tgroup    *group;         /* NULL for kthreads */
     list_node         group_node;    /* in group->threads while alive */
+    struct vfork_done *vfork_done; /* the parent waits for this task to exec or exit */
     uintptr_t         robust_list;   /* user's robust_list_head: locks it held are marked on exit */
     uintptr_t         clear_child_tid; /* zeroed and futex-woken on exit: pthread_join waits on it */
 };
@@ -113,7 +115,13 @@ void task_dead(struct task *task);
 void task_exit(long code);
 long task_wait(struct task *child, long *status, int options);
 long task_waitpid(long pid, long *status, int options);
-int task_fork(const struct trapframe *tf, struct task **out);
+int task_fork(const struct trapframe *tf, bool share_mm, bool clear_sighand, struct task **out);
+
+/* clone(CLONE_VFORK): the parent sleeps until the child has left the mm it shares, by exec or exit */
+struct vfork_done *vfork_alloc(void);
+void vfork_attach(struct task *child, struct vfork_done *vd);
+void vfork_wait(struct vfork_done *vd);
+void vfork_cancel(struct vfork_done *vd);
 int task_clone_thread(const struct trapframe *tf, struct task **out);
 void task_group_exit(long code);
 int task_signal_thread(long tgid, long tid, int sig, const struct ksiginfo *info); /* tgid 0: any */
