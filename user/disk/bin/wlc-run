@@ -1,0 +1,11 @@
+#!/bin/sh
+# wlc on the drm device and the input devices: the session is libseat's noop, which opens the files itself; the legacy kms calls
+export XDG_RUNTIME_DIR=/tmp
+export LIBSEAT_BACKEND=noop
+export WLR_BACKENDS=drm,libinput
+export WLR_DRM_DEVICES=/dev/dri/card0
+export WLR_DRM_NO_ATOMIC=1
+export WLR_RENDERER=gles2
+export WLR_RENDERER_ALLOW_SOFTWARE=1 # llvmpipe is the point: wlroots refuses a software renderer unless it is told it may
+
+exec wlc "$@"

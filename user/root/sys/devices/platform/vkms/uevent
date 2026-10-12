@@ -1,0 +1,4 @@
+DRIVER=vkms
+OF_FULLNAME=/vkms
+OF_COMPATIBLE_0=serika,vkms
+OF_COMPATIBLE_N=1

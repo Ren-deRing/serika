@@ -29,6 +29,9 @@ MESA := $(BUILD_DIR)/mesa.stamp
 # the host's clang, to compile and link on serika itself
 TOOLCHAIN := $(BUILD_DIR)/toolchain.stamp
 
+# the compositor and what it loads
+WAYLAND := $(BUILD_DIR)/wayland.stamp
+
 .PHONY: all $(INITRD) $(DISK)
 
 all: $(INITRD) $(DISK)
@@ -53,6 +56,11 @@ $(MESA): mesa.sh /usr/lib64/libEGL.so.1
 	@./mesa.sh $(DISK_ROOT)
 	@touch $@
 
+$(WAYLAND): wayland.sh wayland/wlc.c /usr/lib64/libwlroots-0.20.so
+	@echo "WAYLND: wlc"
+	@./wayland.sh $(DISK_ROOT)
+	@touch $@
+
 $(TOOLCHAIN): toolchain.sh /usr/bin/clang
 	@echo "TOOLCH: clang"
 	@./toolchain.sh $(DISK_ROOT)
@@ -65,12 +73,12 @@ $(INITRD_DIR)/lib64/%: /lib64/%
 
 $(INITRD): $(EXEC)
 	@cp -r root/. $(INITRD_DIR)/
-	@mkdir -p $(INITRD_DIR)/tmp $(INITRD_DIR)/usr
+	@mkdir -p $(INITRD_DIR)/tmp $(INITRD_DIR)/usr $(INITRD_DIR)/sys/bus/platform $(INITRD_DIR)/proc
 	@echo "CPIO  : $@"
 	@cd $(INITRD_DIR) && find . | LC_ALL=C sort | cpio -o -H newc --quiet > $@
 
 # no journal and no checksums: the kernel reads it without. room for what is in it and some for the tail of each block
-$(DISK): $(MESA) $(TOOLCHAIN) $(shell find $(DISK_DIR) -type f)
+$(DISK): $(MESA) $(TOOLCHAIN) $(WAYLAND) $(shell find $(DISK_DIR) -type f)
 	@echo "EXT4  : $@"
 	@mkdir -p $(DISK_ROOT)/usr
 	@cp -r $(DISK_DIR)/. $(DISK_ROOT)/usr/

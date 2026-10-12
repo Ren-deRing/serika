@@ -1,0 +1,7 @@
+#!/bin/sh
+# the system calls of the program that reads a device's uevent, on the console: /dev/strace is the kernel's trace
+export SYSTEMD_PAGER=cat SYSTEMD_COLORS=0 SYSTEMD_LOG_LEVEL=debug
+
+echo 1 > /dev/strace
+udevadm info /dev/input/event0 2>&1
+echo 0 > /dev/strace
