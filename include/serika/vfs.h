@@ -19,6 +19,8 @@ struct inode_ops {
     int  (*symlink)(struct inode *dir, const char *name, size_t len, const char *target, struct inode **out);
     long (*readlink)(struct inode *inode, char *buf, size_t n); /* the target, up to n, no nul. its length */
     int  (*link)(struct inode *dir, const char *name, size_t len, struct inode *inode); /* a name for an inode that exists */
+    int  (*unlink)(struct inode *dir, const char *name, size_t len, struct inode *inode); /* the name, if it still is inode's. its reference is the caller's to drop */
+    int  (*dir_retire)(struct inode *dir); /* empty: nothing can be put in it again. -ENOTEMPTY */
     long (*read)(struct inode *inode, void *buf, size_t n, uint64_t pos);
     long (*write)(struct inode *inode, const void *buf, size_t n, uint64_t pos);
     long (*ioctl)(struct inode *inode, unsigned long cmd, unsigned long arg); /* no lock held: arg is user memory */
@@ -36,6 +38,7 @@ struct inode {
     uint64_t     ino;
     uint32_t     mode;  /* S_IF* | permissions */
     uint32_t     nlink;
+    uint32_t     rdev;  /* a device: major << 8 | minor */
     uint64_t     size;  /* lock */
     uint32_t     refs;  /* atomic */
 
@@ -85,6 +88,12 @@ void fget(struct file *f);
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
 int  vfs_symlink(const char *target, const char *path);
+int  vfs_unlink(const char *path);
+int  vfs_rmdir(const char *path);
+int  vfs_rename(const char *oldpath, const char *newpath);
+int  vfs_link(const char *oldpath, const char *newpath); /* a hard link */
+int  vfs_chmod(struct inode *inode, uint32_t mode);
+int  vfs_truncate(struct inode *inode, uint64_t size);
 long vfs_readlink(struct inode *inode, char *buf, size_t n);
 int  vfs_link_inode(const char *path, struct inode *inode); /* /dev nodes: a name in a dir */
 
@@ -98,6 +107,7 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 struct inode *ramfs_root(void);
 struct inode *console_create(void);
+void mem_devices_create(void);
 int pipe_create(struct file *out[2]); /* read end, write end */
 void initramfs_unpack(void);
 

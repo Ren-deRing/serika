@@ -42,6 +42,7 @@ static struct test tests[] = {
     { "vfs basic",   test_vfs_basic },
     { "vfs initrd",  test_vfs_initrd },
     { "vfs symlink", test_vfs_symlink },
+    { "vfs remove",  test_vfs_remove },
     { "exec",        test_exec },
     { "exec glibc",  test_exec_glibc },
     { "pipe",        test_pipe },

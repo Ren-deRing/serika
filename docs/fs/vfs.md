@@ -22,7 +22,8 @@ some later path will invert.
 2. One inode mutex at a time. A path walk locks a directory, takes a reference on the
    child, unlocks, and only then steps into the child. `lookup` and `create` of one name
    run under the parent's mutex, so `O_CREAT | O_EXCL` holds. Operations that need two
-   directories (rename, link) are not there yet. They will need a global rename mutex first.
+   directories (rename) take `rename_mutex` first, and still lock one inode at a time (see Removing and
+   moving).
 3. The last `iput()` runs with no inode mutex held: `evict` may drop references on other
    inodes.
 
@@ -57,6 +58,24 @@ link was in (a relative one). `vfs_open()` follows a link at the end the same wa
 `readlink` use and which nothing can be read from or written to. `symlink` is an inode op like
 `create`, under the dir's lock, and so is `link` (a name for an inode that exists: `/dev`). The initrd
 carries links as cpio entries of type `S_IFLNK`, the target as data.
+
+## Removing and moving
+
+`unlink`, `rmdir` and `rename` look up the name with the dir's lock, let go, and ask the dir to take
+the entry out: `ops->unlink(dir, name, len, inode)` does it only if the name is still that inode's, and
+the entry's reference becomes the caller's to drop (`iput()` never runs under a lock). The inode's link
+count drops under its own lock, after. A file that is open stays readable until the last close.
+
+`rmdir` and `rename` hold `rename_mutex`, so no tree is changed under another, and then it is enough
+to take one inode lock at a time. `rmdir` retires the dir first (`dir_retire`: under its own lock it must be
+empty, and `nlink` becomes 0, after which `create`, `link` and `symlink` give `ENOENT`), then takes the
+name out of the parent. `rename` takes out the new name (a dir over a dir only if it is empty), links the
+inode under it, takes out the old name. A dir moving into itself or below is `EINVAL`, found by walking `..`
+up from the target. A dir's `..` is a counted reference to its parent, changed by `link` when it moves.
+`link` of a dir is `EPERM`. There are no timestamps: `utimensat` only checks the file is there.
+
+`/dev` is made in `vfs_init()`: the tty (`console`, `tty`, `ttyS0`) and `null`, `zero`, `full`, `random`,
+`urandom` from `drivers/builtin/mem/`. `inode->rdev` is what `stat` shows.
 
 ## Pipes
 

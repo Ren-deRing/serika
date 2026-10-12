@@ -154,3 +154,106 @@ bool test_vfs_symlink() {
     vfs_close(f);
     return true;
 }
+
+static bool exists(const char *path) {
+    struct file *f;
+
+    if (vfs_open(path, O_PATH | O_NOFOLLOW, 0, &f) != 0) return false;
+
+    vfs_close(f);
+    return true;
+}
+
+static bool make_file(const char *path, const char *data) {
+    struct file *f;
+    uint64_t pos = 0;
+    size_t n = strlen(data);
+
+    if (vfs_open(path, O_RDWR | O_CREAT, 0644, &f) != 0) return false;
+
+    bool ok = kernel_write(f, data, n, &pos) == (long)n;
+
+    vfs_close(f);
+    return ok;
+}
+
+bool test_vfs_remove() {
+    struct file *f, *g;
+    uint64_t pos = 0;
+    char buf[8];
+
+    TEST_ASSERT(vfs_mkdir("/r", 0755) == 0);
+    TEST_ASSERT(vfs_mkdir("/r/a", 0755) == 0);
+    TEST_ASSERT(make_file("/r/a/f", "data"));
+
+    /* unlink: an open file stays readable until it is closed, the name is gone at once */
+    TEST_ASSERT(vfs_open("/r/a/f", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(vfs_unlink("/r/a/f") == 0);
+    TEST_ASSERT(!exists("/r/a/f"));
+    TEST_ASSERT(kernel_read(f, buf, sizeof(buf), &pos) == 4);
+    vfs_close(f);
+
+    TEST_ASSERT(vfs_unlink("/r/a/f") == -ENOENT);
+    TEST_ASSERT(vfs_unlink("/r/a") == -EISDIR);
+    TEST_ASSERT(vfs_unlink("/r/a/.") == -EISDIR);
+
+    /* rmdir: a file is not a dir, a full one stays, an empty one goes and nothing is made in it after */
+    TEST_ASSERT(make_file("/r/a/g", "x"));
+    TEST_ASSERT(vfs_rmdir("/r/a/g") == -ENOTDIR);
+    TEST_ASSERT(vfs_rmdir("/r/a") == -ENOTEMPTY);
+    TEST_ASSERT(vfs_rmdir("/r/a/.") == -EINVAL);
+    TEST_ASSERT(vfs_unlink("/r/a/g") == 0);
+
+    TEST_ASSERT(vfs_open("/r/a", O_RDONLY | O_DIRECTORY, 0, &f) == 0); /* held across the rmdir */
+    TEST_ASSERT(vfs_rmdir("/r/a") == 0);
+    TEST_ASSERT(!exists("/r/a"));
+    TEST_ASSERT(vfs_open("/r/a/h", O_RDWR | O_CREAT, 0644, &g) == -ENOENT);
+    vfs_close(f);
+
+    /* rename: within a dir, over a file, and the data goes with the name */
+    TEST_ASSERT(make_file("/r/one", "data"));
+    TEST_ASSERT(make_file("/r/two", "other"));
+    TEST_ASSERT(vfs_rename("/r/one", "/r/two") == 0);
+    TEST_ASSERT(!exists("/r/one"));
+    TEST_ASSERT(holds_data("/r/two"));
+    TEST_ASSERT(vfs_rename("/r/none", "/r/x") == -ENOENT);
+    TEST_ASSERT(vfs_rename("/r/two", "/r/two") == 0);
+
+    /* a file over a dir and a dir over a file are refused */
+    TEST_ASSERT(vfs_mkdir("/r/d", 0755) == 0);
+    TEST_ASSERT(vfs_rename("/r/two", "/r/d") == -EISDIR);
+    TEST_ASSERT(vfs_rename("/r/d", "/r/two") == -ENOTDIR);
+
+    /* a dir moves with what is in it, and its .. is the new parent's */
+    TEST_ASSERT(vfs_mkdir("/r/e", 0755) == 0);
+    TEST_ASSERT(make_file("/r/d/in", "data"));
+    TEST_ASSERT(vfs_rename("/r/d", "/r/e/moved") == 0);
+    TEST_ASSERT(!exists("/r/d"));
+    TEST_ASSERT(holds_data("/r/e/moved/in"));
+    TEST_ASSERT(vfs_open("/r/e/moved/..", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(vfs_open("/r/e", O_RDONLY, 0, &g) == 0);
+    TEST_ASSERT(f->inode == g->inode);
+    vfs_close(f);
+    vfs_close(g);
+
+    /* not into itself, nor over a full dir, but over an empty one */
+    TEST_ASSERT(vfs_rename("/r/e", "/r/e/moved/inside") == -EINVAL);
+    TEST_ASSERT(vfs_mkdir("/r/full", 0755) == 0);
+    TEST_ASSERT(make_file("/r/full/x", "x"));
+    TEST_ASSERT(vfs_rename("/r/e/moved", "/r/full") == -ENOTEMPTY);
+    TEST_ASSERT(vfs_unlink("/r/full/x") == 0);
+    TEST_ASSERT(vfs_rename("/r/e/moved", "/r/full") == 0);
+    TEST_ASSERT(holds_data("/r/full/in"));
+
+    /* a hard link: both names, and the data until the last one is gone */
+    TEST_ASSERT(vfs_link("/r/full/in", "/r/hard") == 0);
+    TEST_ASSERT(vfs_link("/r/full", "/r/dirlink") == -EPERM);
+    TEST_ASSERT(vfs_unlink("/r/full/in") == 0);
+    TEST_ASSERT(holds_data("/r/hard"));
+
+    TEST_ASSERT(vfs_open("/r/hard", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(f->inode->nlink == 1);
+    TEST_ASSERT(vfs_truncate(f->inode, 2) == 0 && f->inode->size == 2);
+    vfs_close(f);
+    return true;
+}

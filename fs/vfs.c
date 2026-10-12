@@ -12,7 +12,12 @@ struct inode *console_inode;
 
 static volatile uint64_t next_ino = 1;
 
+/* rename and rmdir move or remove directories: one at a time, so a tree never loses its root or loops */
+static struct mutex rename_mutex;
+
 void vfs_init(void) {
+    mutex_init(&rename_mutex);
+
     vfs_root = ramfs_root();
     if (!vfs_root) panic("vfs: unable to create the root -- out of memory?");
 
@@ -26,6 +31,8 @@ void vfs_init(void) {
 
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
         if (vfs_link_inode(names[i], console_inode) != 0) panic("vfs: unable to create %s -- out of memory?", names[i]);
+
+    mem_devices_create();
 }
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
@@ -385,6 +392,233 @@ static int make_link(struct inode *dir, const char *name, size_t len, void *arg)
 
 int vfs_link_inode(const char *path, struct inode *inode) {
     return vfs_make(path, make_link, inode);
+}
+
+/* a path's dir and name, and what the name is if anything: all referenced, nothing locked */
+struct entry {
+    char         *work;
+    struct inode *dir;
+    struct inode *inode; /* NULL: the name is free */
+    const char   *name;
+    size_t        len;
+};
+
+static void entry_put(struct entry *e) {
+    iput(e->dir);
+    if (e->inode) iput(e->inode);
+    kfree(e->work);
+}
+
+/* "." and ".." are not names to remove or move: dots_err */
+static int entry_get(const char *path, struct entry *e, int dots_err) {
+    int links = 0;
+
+    int err = walk_path(path, &e->work, &e->dir, &e->name, &e->len, &links);
+    if (err) return err;
+
+    e->inode = NULL;
+
+    if (e->len == 0)                                   err = -EBUSY; /* "/" */
+    else if (!S_ISDIR(e->dir->mode))                   err = -ENOTDIR;
+    else if (e->len > NAME_MAX)                        err = -ENAMETOOLONG;
+    else if (e->name[0] == '.' && (e->len == 1 || (e->len == 2 && e->name[1] == '.'))) err = dots_err;
+
+    if (!err) {
+        mutex_lock(&e->dir->lock);
+        err = lookup_locked(e->dir, e->name, e->len, &e->inode);
+        mutex_unlock(&e->dir->lock);
+
+        if (err == -ENOENT) err = 0;
+    }
+
+    if (err) {
+        iput(e->dir);
+        kfree(e->work);
+    }
+
+    return err;
+}
+
+/* the name has left its dir: its reference goes, and one link of the inode */
+static void drop_link(struct inode *inode) {
+    mutex_lock(&inode->lock);
+    if (inode->nlink) inode->nlink--;
+    mutex_unlock(&inode->lock);
+
+    iput(inode);
+}
+
+/* e's name out of its dir, if it is still e's inode */
+static int entry_unlink(struct entry *e) {
+    if (!e->dir->ops->unlink) return -EPERM;
+
+    mutex_lock(&e->dir->lock);
+    int err = e->dir->ops->unlink(e->dir, e->name, e->len, e->inode);
+    mutex_unlock(&e->dir->lock);
+
+    return err;
+}
+
+int vfs_unlink(const char *path) {
+    struct entry e;
+
+    int err = entry_get(path, &e, -EISDIR);
+    if (err) return err;
+
+    if (!e.inode)                    err = -ENOENT;
+    else if (S_ISDIR(e.inode->mode)) err = -EISDIR;
+    else if (!(err = entry_unlink(&e))) drop_link(e.inode);
+
+    entry_put(&e);
+    return err;
+}
+
+/* the dir is empty and stays so: the lock of the dir itself is all it takes, and rename_mutex keeps it where it is */
+static int retire(struct inode *dir) {
+    if (!dir->ops->dir_retire) return -EPERM;
+
+    mutex_lock(&dir->lock);
+    int err = dir->ops->dir_retire(dir);
+    mutex_unlock(&dir->lock);
+
+    return err;
+}
+
+int vfs_rmdir(const char *path) {
+    struct entry e;
+
+    mutex_lock(&rename_mutex);
+
+    int err = entry_get(path, &e, -EINVAL);
+    if (err) goto out;
+
+    if (!e.inode)                     err = -ENOENT;
+    else if (!S_ISDIR(e.inode->mode)) err = -ENOTDIR;
+    else if (!(err = retire(e.inode)) && !(err = entry_unlink(&e))) iput(e.inode); /* the name's. nlink is 0 already */
+
+    entry_put(&e);
+out:
+    mutex_unlock(&rename_mutex);
+    return err;
+}
+
+/* is dir ancestor, or below it. one dir locked at a time on the way up */
+static bool is_inside(struct inode *ancestor, struct inode *dir) {
+    struct inode *cur = dir;
+
+    iget(cur);
+
+    for (;;) {
+        if (cur == ancestor) {
+            iput(cur);
+            return true;
+        }
+
+        struct inode *up;
+
+        mutex_lock(&cur->lock);
+        int err = lookup_locked(cur, "..", 2, &up);
+        mutex_unlock(&cur->lock);
+
+        if (err || up == cur) { /* the root is its own */
+            if (!err) iput(up);
+            iput(cur);
+            return false;
+        }
+
+        iput(cur);
+        cur = up;
+    }
+}
+
+static int do_rename(struct entry *o, struct entry *n) {
+    struct inode *src = o->inode, *dst = n->inode;
+    int err;
+
+    if (!src) return -ENOENT;
+    if (src == dst) return 0;
+
+    bool dir = S_ISDIR(src->mode);
+
+    if (dst && S_ISDIR(dst->mode) != dir) return dir ? -ENOTDIR : -EISDIR;
+    if (dir && is_inside(src, n->dir)) return -EINVAL;
+    if (!n->dir->ops->link) return -EPERM;
+
+    /* what the new name was is gone first. a dir has to be empty */
+    if (dst) {
+        if (dir && (err = retire(dst))) return err;
+        if ((err = entry_unlink(n))) return err;
+
+        /* the name's reference. the one lookup gave is entry_put()'s */
+        if (dir) iput(dst);
+        else     drop_link(dst);
+    }
+
+    mutex_lock(&n->dir->lock);
+    err = n->dir->ops->link(n->dir, n->name, n->len, src);
+    mutex_unlock(&n->dir->lock);
+
+    if (err) return err;
+
+    err = entry_unlink(o);
+    if (!err) drop_link(src);
+
+    return err;
+}
+
+int vfs_rename(const char *oldpath, const char *newpath) {
+    struct entry o, n;
+
+    mutex_lock(&rename_mutex);
+
+    int err = entry_get(oldpath, &o, -EBUSY);
+    if (err) goto out;
+
+    if ((err = entry_get(newpath, &n, -EBUSY))) {
+        entry_put(&o);
+        goto out;
+    }
+
+    err = do_rename(&o, &n);
+
+    entry_put(&n);
+    entry_put(&o);
+out:
+    mutex_unlock(&rename_mutex);
+    return err;
+}
+
+/* newpath becomes another name for what oldpath is. not for a dir */
+int vfs_link(const char *oldpath, const char *newpath) {
+    struct file *f;
+
+    int err = vfs_open(oldpath, O_PATH | O_NOFOLLOW, 0, &f);
+    if (err) return err;
+
+    if (S_ISDIR(f->inode->mode)) err = -EPERM;
+    else                         err = vfs_link_inode(newpath, f->inode);
+
+    vfs_close(f);
+    return err;
+}
+
+int vfs_chmod(struct inode *inode, uint32_t mode) {
+    mutex_lock(&inode->lock);
+    inode->mode = (inode->mode & S_IFMT) | (mode & 07777);
+    mutex_unlock(&inode->lock);
+
+    return 0;
+}
+
+int vfs_truncate(struct inode *inode, uint64_t size) {
+    if (!S_ISREG(inode->mode)) return S_ISDIR(inode->mode) ? -EISDIR : -EINVAL;
+    if (!inode->ops->truncate) return -EINVAL;
+
+    mutex_lock(&inode->lock);
+    int err = inode->ops->truncate(inode, size);
+    mutex_unlock(&inode->lock);
+
+    return err;
 }
 
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {

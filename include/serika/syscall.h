@@ -39,11 +39,24 @@
 #define SYS_KILL             62
 #define SYS_UNAME            63
 #define SYS_FCNTL            72
+#define SYS_FSYNC            74
+#define SYS_FDATASYNC        75
+#define SYS_TRUNCATE         76
+#define SYS_FTRUNCATE        77
 #define SYS_GETCWD           79
 #define SYS_CHDIR            80
+#define SYS_RENAME           82
 #define SYS_MKDIR            83
+#define SYS_RMDIR            84
+#define SYS_LINK             86
+#define SYS_UNLINK           87
 #define SYS_SYMLINK          88
 #define SYS_READLINK         89
+#define SYS_CHMOD            90
+#define SYS_FCHMOD           91
+#define SYS_CHOWN            92
+#define SYS_FCHOWN           93
+#define SYS_LCHOWN           94
 #define SYS_UMASK            95
 #define SYS_GETUID          102
 #define SYS_GETGID          104
@@ -60,6 +73,7 @@
 #define SYS_RT_SIGPENDING   127
 #define SYS_RT_SIGSUSPEND   130
 #define SYS_ARCH_PRCTL      158
+#define SYS_SYNC            162
 #define SYS_GETTID          186
 #define SYS_TKILL           200
 #define SYS_FUTEX           202
@@ -71,16 +85,23 @@
 #define SYS_TGKILL          234
 #define SYS_OPENAT          257
 #define SYS_MKDIRAT         258
+#define SYS_FCHOWNAT        260
 #define SYS_NEWFSTATAT      262
+#define SYS_UNLINKAT        263
+#define SYS_RENAMEAT        264
+#define SYS_LINKAT          265
 #define SYS_SYMLINKAT       266
 #define SYS_READLINKAT      267
+#define SYS_FCHMODAT        268
 #define SYS_FACCESSAT       269
 #define SYS_PSELECT6        270
 #define SYS_PPOLL           271
 #define SYS_SET_ROBUST_LIST 273
+#define SYS_UTIMENSAT       280
 #define SYS_DUP3            292
 #define SYS_PIPE2           293
 #define SYS_PRLIMIT64       302
+#define SYS_RENAMEAT2       316
 #define SYS_GETRANDOM       318
 #define SYS_RSEQ            334
 #define SYS_CLONE3          435
@@ -120,6 +141,16 @@ long sys_mkdirat(long dirfd, long upath, long mode);
 long sys_umask(long mask);
 long sys_readlinkat(long dirfd, long upath, long ubuf, long size);
 long sys_symlinkat(long utarget, long dirfd, long ulink);
+long sys_unlinkat(long dirfd, long upath, long flags);
+long sys_renameat2(long olddirfd, long uold, long newdirfd, long unew, long flags);
+long sys_linkat(long olddirfd, long uold, long newdirfd, long unew, long flags);
+long sys_fchmodat(long dirfd, long upath, long mode);
+long sys_fchmod(long fd, long mode);
+long sys_fchownat(long dirfd, long upath, long uid, long gid, long flags);
+long sys_ftruncate(long fd, long len);
+long sys_truncate(long upath, long len);
+long sys_fsync(long fd);
+long sys_utimensat(long dirfd, long upath, long utimes, long flags);
 
 /* kernel/random.c */
 long sys_getrandom(long ubuf, long len, long flags);

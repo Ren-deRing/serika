@@ -133,6 +133,20 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_FCNTL:           return sys_fcntl(args[0], (int)args[1], args[2]);
         case SYS_GETCWD:          return sys_getcwd(args[0], args[1]);
         case SYS_CHDIR:           return sys_chdir(args[0]);
+        case SYS_TRUNCATE:        return sys_truncate(args[0], args[1]);
+        case SYS_FTRUNCATE:       return sys_ftruncate(args[0], args[1]);
+        case SYS_RENAME:          return sys_renameat2(AT_FDCWD, args[0], AT_FDCWD, args[1], 0);
+        case SYS_RMDIR:           return sys_unlinkat(AT_FDCWD, args[0], AT_REMOVEDIR);
+        case SYS_LINK:            return sys_linkat(AT_FDCWD, args[0], AT_FDCWD, args[1], 0);
+        case SYS_UNLINK:          return sys_unlinkat(AT_FDCWD, args[0], 0);
+        case SYS_CHMOD:           return sys_fchmodat(AT_FDCWD, args[0], args[1]);
+        case SYS_FCHMOD:          return sys_fchmod(args[0], args[1]);
+        case SYS_CHOWN:
+        case SYS_LCHOWN:          return sys_fchownat(AT_FDCWD, args[0], (int)args[1], (int)args[2], 0);
+        case SYS_FCHOWN:          return sys_fchownat(args[0], 0, (int)args[1], (int)args[2], 0);
+        case SYS_FSYNC:
+        case SYS_FDATASYNC:       return sys_fsync(args[0]);
+        case SYS_SYNC:            return 0; /* memory only */
         case SYS_MKDIR:           return sys_mkdirat(AT_FDCWD, args[0], args[1]);
         case SYS_SYMLINK:         return sys_symlinkat(args[0], AT_FDCWD, args[1]);
         case SYS_READLINK:        return sys_readlinkat(AT_FDCWD, args[0], args[1], args[2]);
@@ -163,6 +177,13 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_EXIT_GROUP:      return sys_exit_group(args[0]);
         case SYS_TGKILL:          return sys_tgkill((int)args[0], (int)args[1], (int)args[2]);
         case SYS_OPENAT:          return sys_openat((int)args[0], args[1], args[2], args[3]);
+        case SYS_FCHOWNAT:        return sys_fchownat((int)args[0], args[1], (int)args[2], (int)args[3], (int)args[4]);
+        case SYS_UNLINKAT:        return sys_unlinkat((int)args[0], args[1], (int)args[2]);
+        case SYS_RENAMEAT:        return sys_renameat2((int)args[0], args[1], (int)args[2], args[3], 0);
+        case SYS_LINKAT:          return sys_linkat((int)args[0], args[1], (int)args[2], args[3], (int)args[4]);
+        case SYS_FCHMODAT:        return sys_fchmodat((int)args[0], args[1], args[2]);
+        case SYS_UTIMENSAT:       return sys_utimensat((int)args[0], args[1], args[2], (int)args[3]);
+        case SYS_RENAMEAT2:       return sys_renameat2((int)args[0], args[1], (int)args[2], args[3], (int)args[4]);
         case SYS_MKDIRAT:         return sys_mkdirat((int)args[0], args[1], args[2]);
         case SYS_NEWFSTATAT:      return sys_newfstatat((int)args[0], args[1], args[2], args[3]);
         case SYS_SYMLINKAT:       return sys_symlinkat(args[0], (int)args[1], args[2]);

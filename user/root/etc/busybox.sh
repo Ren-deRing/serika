@@ -35,5 +35,27 @@ sh -c 'exit 7'
 
 ls /etc | grep -q motd || fail 17
 
+# removing and moving: rm, mv, cp, ln, touch, rmdir
+mkdir /tmp/d || fail 18
+echo one > /tmp/d/f || fail 19
+cp /tmp/d/f /tmp/d/g || fail 20
+mv /tmp/d/g /tmp/d/h || fail 21
+[ ! -e /tmp/d/g ] && [ "$(cat /tmp/d/h)" = one ] || fail 22
+ln /tmp/d/h /tmp/d/hard || fail 23
+ln -s h /tmp/d/soft || fail 24
+[ "$(cat /tmp/d/soft)" = one ] && [ "$(readlink /tmp/d/soft)" = h ] || fail 25
+touch /tmp/d/new || fail 26
+[ -e /tmp/d/new ] || fail 27
+rm /tmp/d/hard /tmp/d/soft /tmp/d/new || fail 28
+rmdir /tmp/d 2> /dev/null && fail 29
+rm -r /tmp/d || fail 30
+[ ! -e /tmp/d ] || fail 31
+
+# /dev
+echo gone > /dev/null || fail 32
+[ "$(head -c 4 /dev/zero | wc -c)" = 4 ] || fail 33
+[ "$(head -c 16 /dev/urandom | wc -c)" = 16 ] || fail 34
+[ -c /dev/tty ] && [ -c /dev/null ] || fail 35
+
 echo "busybox: all checks passed"
 exit 0

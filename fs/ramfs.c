@@ -24,7 +24,7 @@ struct ramfs_node {
 
     /* dir */
     list_node      entries;
-    struct inode  *parent;  /* no reference: dirs are never removed yet */
+    struct inode  *parent;  /* a dir's, our reference. the root is its own, without one */
 };
 
 static const struct inode_ops ramfs_ops;
@@ -45,7 +45,10 @@ static struct inode *ramfs_new(uint32_t mode, struct inode *parent) {
 
     memset(node, 0, sizeof(*node));
     list_init(&node->entries);
-    node->parent = parent ? parent : inode; /* the root is its own */
+    if (S_ISDIR(mode)) {
+        node->parent = parent ? parent : inode; /* the root is its own */
+        if (parent) iget(parent);
+    }
 
     inode->priv  = node;
     inode->nlink = S_ISDIR(mode) ? 2 : 1;
@@ -61,8 +64,10 @@ static int ramfs_lookup(struct inode *dir, const char *name, size_t len, struct 
     struct ramfs_node *node = node_of(dir);
 
     if (len == 2 && name[0] == '.' && name[1] == '.') {
-        iget(node->parent);
-        *out = node->parent;
+        struct inode *parent = __atomic_load_n(&node->parent, 2); /* __ATOMIC_ACQUIRE: a rename changes it under another lock */
+
+        iget(parent);
+        *out = parent;
         return 0;
     }
 
@@ -81,6 +86,7 @@ static int ramfs_lookup(struct inode *dir, const char *name, size_t len, struct 
 
 static int ramfs_create(struct inode *dir, const char *name, size_t len, uint32_t mode, struct inode **out) {
     if (!S_ISREG(mode) && !S_ISDIR(mode)) return -EINVAL;
+    if (dir->nlink == 0) return -ENOENT; /* retired */
 
     struct ramfs_dirent *d = kmalloc(sizeof(struct ramfs_dirent) + len);
     if (!d) return -ENOMEM;
@@ -106,6 +112,7 @@ static int ramfs_create(struct inode *dir, const char *name, size_t len, uint32_
 static int ramfs_symlink(struct inode *dir, const char *name, size_t len, const char *target, struct inode **out) {
     size_t tlen = strlen(target);
     if (tlen >= PATH_MAX) return -ENAMETOOLONG;
+    if (dir->nlink == 0) return -ENOENT;
 
     struct ramfs_dirent *d = kmalloc(sizeof(struct ramfs_dirent) + len);
     char *copy = kmalloc(tlen + 1);
@@ -140,6 +147,8 @@ static long ramfs_readlink(struct inode *inode, char *buf, size_t n) {
 }
 
 static int ramfs_link(struct inode *dir, const char *name, size_t len, struct inode *inode) {
+    if (dir->nlink == 0) return -ENOENT;
+
     struct ramfs_dirent *d = kmalloc(sizeof(struct ramfs_dirent) + len);
     if (!d) return -ENOMEM;
 
@@ -151,6 +160,43 @@ static int ramfs_link(struct inode *dir, const char *name, size_t len, struct in
     list_add_tail(&d->node, &node_of(dir)->entries);
 
     inode->nlink++;
+
+    /* a dir moved here: its .. is this one now. the old one's reference is let go with the caller's still on it */
+    if (S_ISDIR(inode->mode)) {
+        struct ramfs_node *node = node_of(inode);
+        struct inode *old = node->parent;
+
+        iget(dir);
+        __atomic_store_n(&node->parent, dir, 3); /* __ATOMIC_RELEASE */
+        dir->nlink++;
+
+        iput(old);
+    }
+
+    return 0;
+}
+
+static int ramfs_unlink(struct inode *dir, const char *name, size_t len, struct inode *inode) {
+    for (list_node *n = node_of(dir)->entries.next; n != &node_of(dir)->entries; n = n->next) {
+        struct ramfs_dirent *d = container_of(n, struct ramfs_dirent, node);
+
+        if (d->len != len || memcmp(d->name, name, len) != 0) continue;
+        if (d->inode != inode) return -ENOENT; /* another file by now */
+
+        list_del(&d->node);
+        kfree(d);
+
+        if (S_ISDIR(inode->mode)) dir->nlink--; /* its .. */
+        return 0;
+    }
+
+    return -ENOENT;
+}
+
+static int ramfs_dir_retire(struct inode *dir) {
+    if (!list_empty(&node_of(dir)->entries)) return -ENOTEMPTY;
+
+    dir->nlink = 0;
     return 0;
 }
 
@@ -300,18 +346,22 @@ static void ramfs_evict(struct inode *inode) {
         kfree(d);
     }
 
+    if (S_ISDIR(inode->mode) && node->parent != inode) iput(node->parent);
+
     kfree(node);
 }
 
 static const struct inode_ops ramfs_ops = {
-    .lookup   = ramfs_lookup,
-    .create   = ramfs_create,
-    .symlink  = ramfs_symlink,
-    .readlink = ramfs_readlink,
-    .link     = ramfs_link,
-    .read     = ramfs_read,
-    .write    = ramfs_write,
-    .truncate = ramfs_truncate,
-    .getdents = ramfs_getdents,
-    .evict    = ramfs_evict,
+    .lookup     = ramfs_lookup,
+    .create     = ramfs_create,
+    .symlink    = ramfs_symlink,
+    .readlink   = ramfs_readlink,
+    .link       = ramfs_link,
+    .unlink     = ramfs_unlink,
+    .dir_retire = ramfs_dir_retire,
+    .read       = ramfs_read,
+    .write      = ramfs_write,
+    .truncate   = ramfs_truncate,
+    .getdents   = ramfs_getdents,
+    .evict      = ramfs_evict,
 };

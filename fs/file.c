@@ -354,7 +354,7 @@ static void fill_stat(struct inode *inode, struct stat *st) {
     st->st_ino     = inode->ino;
     st->st_nlink   = inode->nlink;
     st->st_mode    = inode->mode;
-    st->st_rdev    = S_ISCHR(inode->mode) ? 0x501 : 0; /* the console is 5:1 */
+    st->st_rdev    = inode->rdev;
     st->st_size    = inode->size;
     st->st_blksize = PAGE_SIZE;
     st->st_blocks  = ALIGN_UP(inode->size, 512) / 512;
@@ -918,4 +918,142 @@ out:
     vfs_close(in);
     vfs_close(out);
     return ret;
+}
+
+long sys_unlinkat(long dirfd, long upath, long flags) {
+    char *path;
+
+    if (flags & ~AT_REMOVEDIR) return -EINVAL;
+
+    int err = path_from_user(dirfd, upath, &path);
+    if (err) return err;
+
+    err = (flags & AT_REMOVEDIR) ? vfs_rmdir(path) : vfs_unlink(path);
+
+    kfree(path);
+    return err;
+}
+
+/* both paths are made before either is used */
+static long two_paths(long olddirfd, long uold, long newdirfd, long unew, int (*op)(const char *, const char *)) {
+    char *oldp, *newp;
+
+    int err = path_from_user(olddirfd, uold, &oldp);
+    if (err) return err;
+
+    err = path_from_user(newdirfd, unew, &newp);
+    if (!err) {
+        err = op(oldp, newp);
+        kfree(newp);
+    }
+
+    kfree(oldp);
+    return err;
+}
+
+long sys_renameat2(long olddirfd, long uold, long newdirfd, long unew, long flags) {
+    if (flags) return -EINVAL; /* NOREPLACE, EXCHANGE */
+
+    return two_paths(olddirfd, uold, newdirfd, unew, vfs_rename);
+}
+
+long sys_linkat(long olddirfd, long uold, long newdirfd, long unew, long flags) {
+    if (flags) return -EINVAL; /* the old name is not followed, which is what 0 gives on linux */
+
+    return two_paths(olddirfd, uold, newdirfd, unew, vfs_link);
+}
+
+/* the file at path, not followed if it is a link, or the one fd names */
+static int file_at(long dirfd, long upath, long flags, struct file **out) {
+    char *path;
+
+    if (!upath) {
+        *out = fd_get(dirfd);
+        return *out ? 0 : -EBADF;
+    }
+
+    int err = path_from_user(dirfd, upath, &path);
+    if (err) return err;
+
+    err = vfs_open(path, O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0), 0, out);
+    kfree(path);
+    return err;
+}
+
+long sys_fchmodat(long dirfd, long upath, long mode) {
+    struct file *f;
+
+    int err = file_at(dirfd, upath, 0, &f);
+    if (err) return err;
+
+    err = vfs_chmod(f->inode, mode);
+    vfs_close(f);
+    return err;
+}
+
+long sys_fchmod(long fd, long mode) {
+    return sys_fchmodat(fd, 0, mode);
+}
+
+/* there is one user. -1 leaves the id as it is */
+long sys_fchownat(long dirfd, long upath, long uid, long gid, long flags) {
+    struct file *f;
+
+    int err = file_at(dirfd, upath, flags, &f);
+    if (err) return err;
+
+    vfs_close(f);
+    return ((uint32_t)uid != (uint32_t)-1 && uid != 0) || ((uint32_t)gid != (uint32_t)-1 && gid != 0) ? -EPERM : 0;
+}
+
+long sys_ftruncate(long fd, long len) {
+    if (len < 0) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    long err = (f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH) ? -EINVAL : vfs_truncate(f->inode, len);
+
+    vfs_close(f);
+    return err;
+}
+
+long sys_truncate(long upath, long len) {
+    char *path;
+    struct file *f;
+
+    if (len < 0) return -EINVAL;
+
+    int err = path_from_user(AT_FDCWD, upath, &path);
+    if (err) return err;
+
+    err = vfs_open(path, O_PATH, 0, &f);
+    kfree(path);
+    if (err) return err;
+
+    err = vfs_truncate(f->inode, len);
+    vfs_close(f);
+    return err;
+}
+
+/* memory only: there is nothing to write out */
+long sys_fsync(long fd) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    vfs_close(f);
+    return 0;
+}
+
+/* no timestamps are kept, so there is nothing to set: the file has to be there */
+long sys_utimensat(long dirfd, long upath, long utimes, long flags) {
+    (void)utimes;
+
+    struct file *f;
+
+    int err = file_at(dirfd, upath, flags, &f);
+    if (err) return err;
+
+    vfs_close(f);
+    return 0;
 }

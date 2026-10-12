@@ -226,6 +226,7 @@ struct tty_struct *tty_alloc(const struct tty_operations *ops, void *driver_data
     }
 
     tty->inode->priv = tty;
+    tty->inode->rdev = 0x501; /* 5:1, the console */
     tty->ops = ops;
     tty->ldisc = &n_tty_ops;
     tty->driver_data = driver_data;
