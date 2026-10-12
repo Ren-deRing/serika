@@ -23,9 +23,13 @@ EXEC += $(MESA)
 TOOLCHAIN := $(BUILD_DIR)/toolchain.stamp
 EXEC      += $(TOOLCHAIN)
 
-.PHONY: all $(INITRD)
+# the disk: an ext4 image, which the kernel mounts on /usr
+DISK_DIR := disk
+DISK     := $(BUILD_DIR)/disk.img
 
-all: $(INITRD)
+.PHONY: all $(INITRD) $(DISK)
+
+all: $(INITRD) $(DISK)
 
 $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
@@ -61,3 +65,10 @@ $(INITRD): $(EXEC)
 	@cp -r root/. $(INITRD_DIR)/
 	@echo "CPIO  : $@"
 	@cd $(INITRD_DIR) && find . | LC_ALL=C sort | cpio -o -H newc --quiet > $@
+
+# no journal and no checksums: the kernel reads it without
+$(DISK): $(shell find $(DISK_DIR) -type f)
+	@echo "EXT4  : $@"
+	@rm -f $@
+	@mke2fs -q -t ext4 -b 4096 -L serika -m 0 -O ^has_journal,^metadata_csum,^orphan_file,^resize_inode \
+		-E root_owner=0:0 -d $(DISK_DIR) $@ 8M

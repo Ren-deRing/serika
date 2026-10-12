@@ -8,6 +8,7 @@
 #include <serika/patch.h>
 #include <serika/page.h>
 #include <serika/panic.h>
+#include <serika/pci.h>
 #include <serika/pmap.h>
 #include <serika/printk.h>
 #include <serika/random.h>
@@ -21,6 +22,7 @@
 #include <serika/tick.h>
 #include <serika/timer.h>
 #include <serika/vfs.h>
+#include <serika/virtio.h>
 
 #include <asm/acpi.h>
 
@@ -76,6 +78,9 @@ notrace void start_init(void) {
     acpi_init();
     ioapic_init();
     serial_tty_init();
+
+    pci_init();
+    virtio_blk_init();
 
     net_init();
     vfs_init();

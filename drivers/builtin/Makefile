@@ -1,7 +1,10 @@
 DRIVERS := \
+	block \
 	fb \
 	mem \
+	pci \
 	tty \
-	serial
+	serial \
+	virtio
 
 include $(addprefix drivers/builtin/,$(addsuffix /Makefile,$(DRIVERS)))
