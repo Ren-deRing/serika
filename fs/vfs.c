@@ -1,5 +1,6 @@
 #include <serika/errno.h>
 #include <serika/fcntl.h>
+#include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
@@ -190,6 +191,8 @@ void fget(struct file *f) {
 void vfs_close(struct file *f) {
     if (__atomic_sub_fetch(&f->refs, 1, 4) != 0) return; /* __ATOMIC_ACQ_REL */
 
+    if (f->inode->ops->release) f->inode->ops->release(f->inode, f->flags);
+
     iput(f->inode);
     kfree(f);
 }
@@ -230,6 +233,8 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
     if (S_ISDIR(inode->mode)) return -EISDIR;
     if (!inode->ops->read) return -EINVAL;
 
+    if (inode->ops->stream) return inode->ops->read(inode, buf, n, *pos);
+
     mutex_lock(&inode->lock);
     long r = inode->ops->read(inode, buf, n, *pos);
     mutex_unlock(&inode->lock);
@@ -244,6 +249,8 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
     if ((f->flags & O_ACCMODE) == O_RDONLY) return -EBADF;
     if (!inode->ops->write) return -EINVAL;
 
+    if (inode->ops->stream) return inode->ops->write(inode, buf, n, *pos);
+
     mutex_lock(&inode->lock);
 
     uint64_t at = (f->flags & O_APPEND) ? inode->size : *pos;
@@ -252,5 +259,43 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
     mutex_unlock(&inode->lock);
 
     if (r > 0) *pos = at + r;
+    return r;
+}
+
+/* the dirent type is the mode's S_IFMT >> 12, which is what DT_* are */
+struct dirent64 {
+    uint64_t d_ino;
+    int64_t  d_off;
+    uint16_t d_reclen;
+    uint8_t  d_type;
+    char     d_name[];
+};
+
+size_t vfs_dirent_put(void *buf, size_t n, uint64_t ino, uint64_t off, uint32_t mode, const char *name, size_t len) {
+    size_t reclen = ALIGN_UP(sizeof(struct dirent64) + len + 1, 8);
+    if (reclen > n) return 0;
+
+    struct dirent64 *d = buf;
+
+    d->d_ino    = ino;
+    d->d_off    = off;
+    d->d_reclen = reclen;
+    d->d_type   = (mode & S_IFMT) >> 12;
+
+    memcpy(d->d_name, name, len);
+    memset(d->d_name + len, 0, reclen - sizeof(*d) - len);
+
+    return reclen;
+}
+
+long kernel_getdents(struct file *f, void *buf, size_t n, uint64_t *pos) {
+    struct inode *inode = f->inode;
+
+    if (!S_ISDIR(inode->mode) || !inode->ops->getdents) return -ENOTDIR;
+
+    mutex_lock(&inode->lock);
+    long r = inode->ops->getdents(inode, buf, n, pos);
+    mutex_unlock(&inode->lock);
+
     return r;
 }

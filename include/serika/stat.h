@@ -15,6 +15,7 @@
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
 #define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR)
+#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
 
 struct stat {
     uint64_t st_dev;

@@ -198,6 +198,39 @@ static int ramfs_truncate(struct inode *inode, uint64_t size) {
     return 0;
 }
 
+/* entries 0 and 1 are "." and "..", then the list in order */
+static long ramfs_getdents(struct inode *dir, void *buf, size_t n, uint64_t *pos) {
+    struct ramfs_node *node = node_of(dir);
+    size_t done = 0;
+    uint64_t idx = 0;
+
+    for (int i = 0; i < 2; i++, idx++) {
+        if (idx < *pos) continue;
+
+        struct inode *at = i ? node->parent : dir; /* the name is ".." cut to len */
+        size_t r = vfs_dirent_put((char *)buf + done, n - done, at->ino, idx + 1, at->mode, "..", 1 + i);
+
+        if (!r) return done ? (long)done : -EINVAL;
+
+        done += r;
+        *pos = idx + 1;
+    }
+
+    for (list_node *it = node->entries.next; it != &node->entries; it = it->next, idx++) {
+        if (idx < *pos) continue;
+
+        struct ramfs_dirent *d = container_of(it, struct ramfs_dirent, node);
+        size_t r = vfs_dirent_put((char *)buf + done, n - done, d->inode->ino, idx + 1, d->inode->mode, d->name, d->len);
+
+        if (!r) return done ? (long)done : -EINVAL;
+
+        done += r;
+        *pos = idx + 1;
+    }
+
+    return done;
+}
+
 static void ramfs_evict(struct inode *inode) {
     struct ramfs_node *node = node_of(inode);
 
@@ -221,5 +254,6 @@ static const struct inode_ops ramfs_ops = {
     .read     = ramfs_read,
     .write    = ramfs_write,
     .truncate = ramfs_truncate,
+    .getdents = ramfs_getdents,
     .evict    = ramfs_evict,
 };

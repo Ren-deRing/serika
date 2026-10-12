@@ -2,6 +2,7 @@
 
 #include <serika/mutex.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -17,7 +18,12 @@ struct inode_ops {
     long (*read)(struct inode *inode, void *buf, size_t n, uint64_t pos);
     long (*write)(struct inode *inode, const void *buf, size_t n, uint64_t pos);
     int  (*truncate)(struct inode *inode, uint64_t size);
+    long (*getdents)(struct inode *dir, void *buf, size_t n, uint64_t *pos); /* linux_dirent64s, pos is the entry */
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
+
+    /* a stream sleeps in read and write, so they run without the inode lock and take care of their own */
+    bool stream;
+    void (*release)(struct inode *inode, uint32_t flags); /* a file on it is closed, flags are its. no lock held */
 };
 
 struct inode {
@@ -41,6 +47,8 @@ struct file {
     struct mutex  pos_lock; /* across a whole read or write, user copies included */
 };
 
+struct cwd;
+
 /* a task's fds. threads share it */
 #define FILES_MAX 256
 
@@ -49,6 +57,10 @@ struct files {
     uint32_t      users; /* atomic */
     struct file  *fd[FILES_MAX];
     uint64_t      cloexec[FILES_MAX / 64]; /* closed by execve */
+
+    /* the fs state rides along: threads share it like Linux's CLONE_FS, fork copies it */
+    struct cwd   *cwd;   /* NULL: "/" */
+    uint32_t      umask;
 };
 
 extern struct inode *vfs_root;
@@ -67,12 +79,17 @@ void fget(struct file *f);
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
 
+/* one linux_dirent64 into buf. its size, 0 if n is too small */
+size_t vfs_dirent_put(void *buf, size_t n, uint64_t ino, uint64_t off, uint32_t mode, const char *name, size_t len);
+long kernel_getdents(struct file *f, void *buf, size_t n, uint64_t *pos);
+
 /* kernel buffers. the caller keeps the position */
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 struct inode *ramfs_root(void);
 struct inode *console_create(void);
+int pipe_create(struct file *out[2]); /* read end, write end */
 void initramfs_unpack(void);
 
 struct files *files_create(void); /* 0, 1 and 2 on the console */
