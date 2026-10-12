@@ -6,6 +6,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -54,9 +55,10 @@ int main(void) {
     if (fstat(fd, &st) != 0 || st.st_size != 3) return 16;
     close(fd);
 
-    /* the console is a tty, with nothing to read yet */
+    /* the console is a tty, cooked: a read would wait for a line, so it is only asked */
+    struct termios tio;
     if (!isatty(1)) return 17;
-    if (read(0, buf, sizeof(buf)) != 0) return 18;
+    if (tcgetattr(0, &tio) != 0 || !(tio.c_lflag & ICANON)) return 18;
 
     /* time */
     struct timespec t0;
