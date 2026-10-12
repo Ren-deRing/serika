@@ -5,7 +5,8 @@
 `mm->lock` is a mutex. It protects the vma tree, `brk`, `mmap_next`, and the pmap while a fault
 fills it, and it is held across any change to the vmas (`mm_map()`, `mm_unmap()`,
 `mm_protect()`, `mm_mmap()`, `mm_brk()`), shootdowns included. Its order is `mm->lock`, then
-`tlb_mutex`, then the pmap lock, then the buddy and slab locks.
+`tlb_mutex`, then the pmap lock, then the buddy and slab locks (the slab's is a cache's lock; no slab
+code holds it while it calls the buddy).
 
 A mutex may sleep, so it is taken with irq on and no spinlock held, from task context only.
 The page fault handler turns irq on before it takes it. Signal delivery does the same on the
@@ -107,3 +108,32 @@ Anonymous memory reads zero after, a private file mapping reads the file again. 
 change nothing (`NORMAL`, `RANDOM`, `SEQUENTIAL`, `WILLNEED`, `HUGEPAGE`, `NOHUGEPAGE`,
 `DONTDUMP`, `DODUMP`, `MERGEABLE`, `UNMERGEABLE`, `COLD`, `PAGEOUT`) are taken. The ones that
 change what fork or a file does (`DONTFORK`, `WIPEONFORK`, `REMOVE`) are `EINVAL`.
+
+## Slab
+
+`kmalloc()` is a set of caches of 8 to 4096 bytes (`mm/slab.c`), each of slabs that are one page. A cpu allocates
+from its own slab of a cache, and frees to it, with irq off and nothing else: the common `kmalloc()` and `kfree()`
+touch no shared memory. A slab belongs to a cpu while it is frozen: that is its active slab or one of the few on its
+partial list.
+
+A free from another cpu cannot use the owner's freelist. It pushes the object on the slab's own freelist with one
+compare and swap of the slab's state, a word with the head of that freelist, the number of objects in use and the
+frozen bit. The owner takes the whole freelist when it runs out. Only pushes and takes of everything happen, so
+there is no ABA. Where a free finds the slab decides the rest:
+
+- Frozen: that is all. Its cpu finds the object when it needs it.
+- Not frozen and full (on no list): the free takes it for its own cpu (sets frozen with the push) and puts it on that
+  cpu's partial list. A partial list longer than 4 gives the oldest back (unfrozen) to the cache.
+- Not frozen, not full: it is on the cache's partial list. If the free empties it and the cache has more than 4 slabs
+  (`MIN_PARTIAL`), it goes to the buddy.
+
+The cache's lock covers its partial list and each slab's `on_list` flag, and nothing else; it is taken to refill a cpu
+and to give slabs back. It is never held across `alloc_pages()` or `free_pages()`. An allocation refills from, in order,
+the active slab's freelist (what other cpus freed), the cpu's partial list, the cache's partial list (the first slab is
+active, up to two more go on the partial list), and the buddy.
+
+A free checks that the object is in a slab and, when it is not on the cpu's active slab, that it is at an
+object of its cache. A bad one panics.
+
+Not here: shrinking the caches under memory pressure beyond the empty slabs, caches that are not `kmalloc`'s sizes,
+redzones and poisoning, and a node for each memory node.

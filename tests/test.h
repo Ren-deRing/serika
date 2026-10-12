@@ -54,6 +54,9 @@ bool test_slab_reuse();
 bool test_slab_multi();
 bool test_slab_stress();
 bool test_slab_state();
+bool test_slab_remote();
+bool test_slab_smp();
+bool test_slab_reclaim();
 
 bool test_mm_fault();
 bool test_tlb_storm();

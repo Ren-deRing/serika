@@ -5,20 +5,22 @@
 
 #include <stdint.h>
 
+/* a cache of objects of one size. a slab is a page of them. see mm/slab.c */
 struct kmem_cache {
     size_t     size;
-    spinlock_t lock; /* TODO: we will need percpu cache */
+    unsigned   objects;    /* in a slab */
+    unsigned   index;      /* of the cpus' array of caches */
 
-    list_node partial;
-    list_node full;
-    list_node empty;
+    spinlock_t lock;       /* partial, nr_partial and the on_list of its slabs. the only lock: no slab op under it calls the buddy */
+    list_node  partial;    /* slabs nobody owns that have free objects */
+    unsigned   nr_partial;
 };
 
+/* in the page of the slab */
 struct slab {
-    void     *free_head;
-    uint16_t  inuse;
-    uint16_t  objects;
-    struct kmem_cache *cache;    
+    uint64_t           state; /* freelist head, objects in use and frozen in one word: slab.c */
+    struct kmem_cache *cache; /* NULL: not a slab */
+    bool               on_list; /* partial. cache lock */
 };
 
 void *slab_alloc(struct kmem_cache *cache);

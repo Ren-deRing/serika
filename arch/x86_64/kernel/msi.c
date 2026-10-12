@@ -11,6 +11,9 @@
 static uint8_t    next_vector = MSI_VECTOR_FIRST;
 static spinlock_t msi_lock = SPINLOCK_INITIALIZER;
 
+/* TODO: the destination is the cpu that asks, whatever the device does after: a disk that was set up at boot on the
+ * bsp interrupts the bsp. a queue for each cpu with its own vector (virtio's multiqueue) would keep the completion
+ * where the request was made */
 int irq_request_msi(irq_handler_t handler, void *data, uint64_t *addr, uint32_t *msg) {
     extern void register_handler(uint8_t vector, irq_handler_t handler, void *data);
 
