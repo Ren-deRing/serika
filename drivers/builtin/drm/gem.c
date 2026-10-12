@@ -113,24 +113,14 @@ uintptr_t drm_getpage(struct inode *inode, uint64_t index) {
     return phys;
 }
 
-/* bytes of the buffer from off, as many as there are up to n */
-size_t drm_bo_read(struct drm_bo *bo, size_t off, void *dst, size_t n) {
-    size_t done = 0;
+/* where the buffer is at off, and how much of it is there before the page ends. NULL: past the end */
+const uint8_t *drm_bo_span(struct drm_bo *bo, size_t off, size_t *len) {
+    if (off >= bo->size) return NULL;
 
-    if (off >= bo->size) return 0;
-    if (n > bo->size - off) n = bo->size - off;
+    size_t in_page = off & (PAGE_SIZE - 1);
 
-    while (done < n) {
-        size_t in_page = (off + done) & (PAGE_SIZE - 1);
-        size_t c = PAGE_SIZE - in_page;
-
-        if (c > n - done) c = n - done;
-
-        memcpy((uint8_t *)dst + done, (void *)P2V(bo->pages[(off + done) >> PAGE_SHIFT] + in_page), c);
-        done += c;
-    }
-
-    return done;
+    *len = PAGE_SIZE - in_page;
+    return (const uint8_t *)P2V(bo->pages[off >> PAGE_SHIFT] + in_page);
 }
 
 /* ---- handles: the numbers a file knows its buffers by ---- */

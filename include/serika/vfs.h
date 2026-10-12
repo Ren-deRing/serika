@@ -160,6 +160,8 @@ struct inode *ramfs_anon_file(void); /* a file with no name: memfd, shared anony
 uintptr_t vfs_getpage(struct inode *inode, uint64_t index);
 struct inode *console_create(void);
 void mem_devices_create(void);
+void tty_dev_create(void);     /* /dev/tty: the caller's controlling terminal, the console if there is none */
+void pty_devices_create(void); /* /dev/ptmx and /dev/pts */
 void fb_devices_create(void); /* /dev/fb0, if the boot gave a framebuffer */
 void drm_devices_create(void); /* /dev/dri/card0, on the same framebuffer */
 int pipe_create(struct file *out[2], uint32_t flags); /* read end, write end. flags: O_NONBLOCK */

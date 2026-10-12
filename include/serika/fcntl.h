@@ -5,6 +5,7 @@
 #define O_WRONLY    00000001
 #define O_RDWR      00000002
 #define O_CREAT     00000100
+#define O_NOCTTY    00000400
 #define O_EXCL      00000200
 #define O_TRUNC     00001000
 #define O_APPEND    00002000
@@ -25,6 +26,8 @@
 #define F_GETFL         3
 #define F_SETFL         4
 #define F_DUPFD_CLOEXEC 1030
+#define F_ADD_SEALS     1033
+#define F_GET_SEALS     1034
 
 #define FD_CLOEXEC 1
 

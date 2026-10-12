@@ -1,20 +1,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* rep movsb and stosb: the cpu does them a line at a time. no sse in the kernel to do better with */
 void *memset(void *dest, int ch, size_t count) {
-    uint8_t *p = (uint8_t *)dest;
-    for (size_t i = 0; i < count; i++) {
-        p[i] = (uint8_t)ch;
-    }
+    void *d = dest;
+
+    __asm__ volatile("rep stosb" : "+D"(d), "+c"(count) : "a"(ch) : "memory");
     return dest;
 }
 
 void *memcpy(void *dest, const void *src, size_t count) {
-    uint8_t *d = (uint8_t *)dest;
-    const uint8_t *s = (const uint8_t *)src;
-    for (size_t i = 0; i < count; i++) {
-        d[i] = s[i];
-    }
+    void *d = dest;
+
+    __asm__ volatile("rep movsb" : "+D"(d), "+S"(src), "+c"(count) : : "memory");
     return dest;
 }
 

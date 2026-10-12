@@ -1,6 +1,7 @@
 #include <serika/errno.h>
 #include <serika/fcntl.h>
 #include <serika/string.h>
+#include <serika/syscall.h>
 #include <serika/tty.h>
 #include <serika/vfs.h>
 
@@ -78,5 +79,15 @@ bool test_tty_ldisc() {
 
     tty->termios = saved;
     vfs_close(f);
+    return true;
+}
+
+/* /dev/ptmx and /dev/pts through glibc: lines and their echo, termios and the window size, a locked slave, a child on the
+ * slave and the end seen from both sides */
+bool test_exec_pty() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/pty", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }

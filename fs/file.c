@@ -835,6 +835,15 @@ long sys_fcntl(long fd, long cmd, long arg) {
                              0); /* __ATOMIC_RELAXED */
             vfs_close(f);
             return 0;
+
+        /* seals promise a mapped file will not shrink or change under whoever maps it: nothing here does, so none is
+         * kept, and the program (a wayland client sealing its shm pool) is told they are all fine */
+        case F_ADD_SEALS:
+        case F_GET_SEALS:
+            if (!(f = fd_get(fd))) return -EBADF;
+
+            vfs_close(f);
+            return 0;
     }
 
     printk("syscall: fcntl %ld not supported -- task %lu\n", cmd, current_task()->id);

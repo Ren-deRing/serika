@@ -52,6 +52,7 @@ static struct test tests[] = {
     { "exec glibc",  test_exec_glibc },
     { "pipe",        test_pipe },
     { "tty ldisc",   test_tty_ldisc },
+    { "exec pty",    test_exec_pty },
     { "exec files",  test_exec_files },
     { "exec busybox", test_exec_busybox },
     { "exec syscalls", test_exec_syscalls },

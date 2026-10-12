@@ -26,8 +26,8 @@ void vfs_init(void) {
     console_inode = console_create();
     if (!console_inode) panic("vfs: no console tty -- is the serial driver up?");
 
-    /* one tty: what the console, /dev/tty and the uart are */
-    static const char *const names[] = { "/dev/console", "/dev/tty", "/dev/ttyS0" };
+    /* one tty: what the console and the uart are. /dev/tty is whichever the caller has, and this one if there is none */
+    static const char *const names[] = { "/dev/console", "/dev/ttyS0" };
 
     if (vfs_mkdir("/dev", 0755) != 0) panic("vfs: unable to create /dev -- out of memory?");
 
@@ -37,7 +37,9 @@ void vfs_init(void) {
     /* shm_open() makes its files here: a window's pixels, for the programs that do not use memfd */
     if (vfs_mkdir("/dev/shm", 01777) != 0) panic("vfs: unable to create /dev/shm -- out of memory?");
 
+    tty_dev_create();
     mem_devices_create();
+    pty_devices_create();
     fb_devices_create();
     drm_devices_create();
 }

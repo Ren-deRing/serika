@@ -12,6 +12,9 @@ mkdir -p "$root/usr/share/X11" "$root/usr/share/icons/default" "$root/usr/share/
 cp -r /usr/share/libinput "$root/usr/share/"
 cp -r /usr/share/xkeyboard-config-2 "$root/usr/share/"
 ln -sfn ../xkeyboard-config-2 "$root/usr/share/X11/xkb"
+cp -r /usr/share/X11/locale "$root/usr/share/X11/" # the compose tables, which libxkbcommon finds by the locale's name
+mkdir -p "$root/usr/lib/locale"
+cp -r /usr/lib/locale/C.utf8 "$root/usr/lib/locale/" # foot refuses to run in a locale that is not utf-8
 cp /usr/share/icons/default/index.theme "$root/usr/share/icons/default/"
 cp /usr/share/icons/Adwaita/index.theme "$root/usr/share/icons/Adwaita/"
 cp -r /usr/share/icons/Adwaita/cursors "$root/usr/share/icons/Adwaita/"
@@ -38,8 +41,23 @@ cat > "$root/usr/share/fontconfig/fonts.conf" <<'EOF'
 </fontconfig>
 EOF
 
+# foot, a terminal: its configuration (found through XDG_CONFIG_DIRS), the terminfo it names itself with, a monospace font
+# and the script labwc starts a terminal with (the host's looks for one and starts with #!/usr/bin/sh, which is not here)
+cp -L /usr/bin/foot "$root/usr/bin/"
+printf '#!/bin/sh\nexec foot "$@"\n' > "$root/usr/bin/lab-sensible-terminal"
+chmod +x "$root/usr/bin/lab-sensible-terminal"
+mkdir -p "$root/usr/etc/xdg/foot" "$root/usr/share/terminfo/f" "$root/usr/share/terminfo/x"
+cat > "$root/usr/etc/xdg/foot/foot.ini" <<'EOF'
+shell=/bin/sh
+font=DejaVu Sans Mono:size=12
+pad=4x4
+EOF
+cp -L /usr/share/terminfo/f/foot /usr/share/terminfo/f/foot+base /usr/share/terminfo/f/foot-direct "$root/usr/share/terminfo/f/"
+cp -L /usr/share/terminfo/x/xterm-256color "$root/usr/share/terminfo/x/"
+cp /usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf /usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Bold.ttf "$root/usr/share/fonts/dejavu/"
+
 # what they need, except what the initrd has
-for lib in $(ldd "$root/usr/bin/wayland-info" "$root/usr/bin/libinput" "$root/usr/bin/udevadm" "$root/usr/bin/labwc" "$root/usr/bin/labnag" "$root/usr/bin/Xwayland" \
+for lib in $(ldd "$root/usr/bin/wayland-info" "$root/usr/bin/libinput" "$root/usr/bin/udevadm" "$root/usr/bin/labwc" "$root/usr/bin/labnag" "$root/usr/bin/Xwayland" "$root/usr/bin/foot" \
                  "$root/usr/libexec/libinput/libinput-list-devices" "$root/usr/libexec/libinput/libinput-debug-events" 2>/dev/null | awk '/=> \//{print $3}' | sort -u); do
     case $(basename "$lib") in
         ld-linux-x86-64.so.2|libc.so.6|libm.so.6|libgcc_s.so.1) continue ;;

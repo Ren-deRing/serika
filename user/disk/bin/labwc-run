@@ -1,8 +1,11 @@
 #!/bin/sh
 # labwc on the drm device and the input devices, with libseat's noop session (it opens the files itself) and the legacy kms calls
 export XDG_RUNTIME_DIR=/tmp
+export LC_ALL=C.UTF-8
 export HOME=/tmp
 export FONTCONFIG_FILE=/usr/share/fontconfig/fonts.conf
+export XDG_CONFIG_DIRS=/usr/etc/xdg
+export TERMINFO_DIRS=/usr/share/terminfo
 export LIBSEAT_BACKEND=noop
 export WLR_BACKENDS=drm,libinput
 export WLR_DRM_DEVICES=/dev/dri/card0

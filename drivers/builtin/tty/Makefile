@@ -1,6 +1,6 @@
 TTY_DIR := drivers/builtin/tty
 
-TTY_SRCS_C := tty_io.c n_tty.c
+TTY_SRCS_C := tty_io.c n_tty.c pty.c
 TTY_SRCS_S :=
 
 TTY_OBJS := $(patsubst %.c,$(OBJ_DIR)/$(TTY_DIR)/%.c.o,$(TTY_SRCS_C))

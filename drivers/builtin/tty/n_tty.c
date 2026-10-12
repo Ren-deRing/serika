@@ -160,12 +160,12 @@ static long n_tty_read(struct tty_struct *tty, char *buf, size_t n, bool nonbloc
     uint64_t flags = spin_lock_irqsave(&tty->lock);
 
     /* VMIN 0: whatever is there, which may be nothing */
-    while (!readable(tty, n) && !(!L_ICANON(tty) && tty->termios.c_cc[VMIN] == 0)) {
+    while (!readable(tty, n) && !(!L_ICANON(tty) && tty->termios.c_cc[VMIN] == 0) && !tty->hung) {
         spin_unlock_irqrestore(&tty->lock, flags);
 
         if (nonblock) return -EAGAIN;
 
-        int err = wait_event_interruptible(tty->read_wait, readable(tty, n));
+        int err = wait_event_interruptible(tty->read_wait, readable(tty, n) || tty->hung);
         if (err) return err;
 
         flags = spin_lock_irqsave(&tty->lock);

@@ -133,6 +133,11 @@ struct drm_dev {
     uint32_t       crtc_x, crtc_y;
     uint32_t       dpms;
 
+    /* what the screen has of the last present(), so the next one writes only what changed: the framebuffer is write
+     * combining memory, slow to write and not to be read, and a flip that takes long is seen half done */
+    uint8_t       *shadow;
+    bool           shadow_valid;
+
     list_node      fbs;
     uint32_t       next_fb_id;
 
@@ -161,7 +166,7 @@ long drm_gem_close_ioctl(struct drm_file *file, uintptr_t arg);
 long drm_prime_handle_to_fd(struct drm_file *file, uintptr_t arg);
 long drm_prime_fd_to_handle(struct drm_file *file, uintptr_t arg);
 uintptr_t drm_getpage(struct inode *inode, uint64_t index);
-size_t drm_bo_read(struct drm_bo *bo, size_t off, void *dst, size_t n); /* bytes copied out of the pages */
+const uint8_t *drm_bo_span(struct drm_bo *bo, size_t off, size_t *len); /* the pages, one at a time */
 
 /* kms.c */
 void drm_kms_init(void);

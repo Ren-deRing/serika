@@ -102,6 +102,39 @@ void drm_kms_init(void) {
 
 /* ---- showing a buffer ---- */
 
+#define PRESENT_BLOCK 64 /* what is compared, and written when it differs */
+
+static bool block_differs(const uint8_t *a, const uint8_t *b, size_t n) {
+    for (size_t i = 0; i < n; i += 4)
+        if (*(const uint32_t *)(a + i) != *(const uint32_t *)(b + i)) return true;
+
+    return false;
+}
+
+/* a piece of a row of the buffer to the framebuffer at out: the blocks that are not what the shadow has, in runs. */
+static void present_span(const uint8_t *src, uint8_t *out, uint8_t *shadow, size_t n) {
+    size_t i = 0;
+
+    while (i < n) {
+        size_t len = n - i < PRESENT_BLOCK ? n - i : PRESENT_BLOCK;
+
+        if (!block_differs(src + i, shadow + i, len)) {
+            i += len;
+            continue;
+        }
+
+        size_t start = i;
+
+        for (i += len; i < n; i += len) {
+            len = n - i < PRESENT_BLOCK ? n - i : PRESENT_BLOCK;
+            if (!block_differs(src + i, shadow + i, len)) break;
+        }
+
+        memcpy(shadow + start, src + start, i - start);
+        memcpy(out + start, src + start, i - start);
+    }
+}
+
 /* the buffer to the framebuffer, from (x, y) in it, as much as the mode and the buffer have. lock held */
 static void present(struct drm_dev *d) {
     struct drm_fb *fb = d->crtc_fb;
@@ -115,11 +148,42 @@ static void present(struct drm_dev *d) {
     if (w > fb->width - d->crtc_x) w = fb->width - d->crtc_x;
     if (h > fb->height - d->crtc_y) h = fb->height - d->crtc_y;
 
-    for (uint32_t y = 0; y < h; y++) {
-        size_t from = (size_t)(d->crtc_y + y) * fb->pitch + (size_t)d->crtc_x * 4;
+    size_t shadow_size = (size_t)out->pitch * out->height;
 
-        drm_bo_read(fb->bo, from, (uint8_t *)out->fb_addr + (size_t)y * out->pitch, (size_t)w * 4);
+    if (!d->shadow) {
+        void *pages = alloc_pages(SIZE_TO_ORDER(shadow_size));
+
+        if (pages) d->shadow = (uint8_t *)P2V((uintptr_t)pages);
     }
+
+    for (uint32_t y = 0; y < h; y++) {
+        uint8_t *dst = (uint8_t *)out->fb_addr + (size_t)y * out->pitch;
+        uint8_t *sh = d->shadow ? d->shadow + (size_t)y * out->pitch : NULL;
+        size_t from = (size_t)(d->crtc_y + y) * fb->pitch + (size_t)d->crtc_x * 4;
+        size_t row = (size_t)w * 4, done = 0;
+
+        while (done < row) {
+            size_t len;
+            const uint8_t *src = drm_bo_span(fb->bo, from + done, &len);
+
+            if (!src) break;
+            if (len > row - done) len = row - done;
+
+            /* no shadow (no memory for it), or one that is not what the screen has: all of it goes */
+            if (!sh) {
+                memcpy(dst + done, src, len);
+            } else if (!d->shadow_valid) {
+                memcpy(sh + done, src, len);
+                memcpy(dst + done, src, len);
+            } else {
+                present_span(src, dst + done, sh + done, len);
+            }
+
+            done += len;
+        }
+    }
+
+    d->shadow_valid = d->shadow != NULL;
 }
 
 static void fb_free(struct drm_fb *fb) {
@@ -383,6 +447,7 @@ static long set_crtc(uintptr_t arg) {
             d->crtc_x  = c.x;
             d->crtc_y  = c.y;
 
+            d->shadow_valid = false; /* a new mode set: the screen may be anything */
             present(d);
         }
     }
@@ -560,6 +625,7 @@ static long set_property(uint32_t obj_id, uint32_t prop_id, uint64_t value) {
 
     mutex_lock(&drm_dev.lock);
     drm_dev.dpms = value;
+    drm_dev.shadow_valid = false;
     present(&drm_dev); /* on shows it again */
     mutex_unlock(&drm_dev.lock);
     return 0;

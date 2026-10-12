@@ -74,7 +74,13 @@ struct inode;
 
 /* what the device behind a tty does. no locks are held */
 struct tty_operations {
-    long (*write)(struct tty_struct *tty, const char *buf, size_t n);
+    long (*write)(struct tty_struct *tty, const char *buf, size_t n); /* how many it took: 0 is no room, and write_room says when there is */
+
+    /* none of these is needed of a device that is there to stay (the uart) */
+    bool (*write_room)(struct tty_struct *tty);
+    int  (*open)(struct tty_struct *tty);  /* a file is opened on it: may refuse */
+    void (*close)(struct tty_struct *tty); /* and closed */
+    void (*free)(struct tty_struct *tty);  /* the last reference of its inode is gone: driver_data goes */
 };
 
 /* the line discipline between the device and read(): n_tty is the only one.
@@ -97,8 +103,12 @@ struct tty_struct {
     struct ktermios   termios;
     struct winsize    winsize;
     long              pgrp; /* foreground, as a process id. 0: none */
+    long              sid;  /* the session this is the controlling terminal of: 0 none, and always for the console */
+    struct tty_struct *ctty_next; /* the ttys that have one (ctty_lock) */
 
     struct wait_queue read_wait;
+    struct wait_queue write_wait; /* a writer that found no room */
+    bool              hung;       /* the other end is gone: a read gives 0 */
 
     /* a driver fills these from its irq, and pushes */
     uint8_t           flip[TTY_FLIP_SIZE];
@@ -118,6 +128,9 @@ extern const struct tty_ldisc_ops n_tty_ops;
 extern struct tty_struct *console_tty;
 
 struct tty_struct *tty_alloc(const struct tty_operations *ops, void *driver_data);
+void tty_ctty_drop(struct tty_struct *tty); /* its session loses it: the master is gone */
+void tty_dev_create(void);                  /* /dev/tty: the caller's controlling terminal */
+long tty_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg); /* what the file of a tty's inode does, for a pty's master */
 
 /* a driver's irq: put characters in, then push them to the line discipline */
 void tty_insert_flip_char(struct tty_struct *tty, uint8_t c);
