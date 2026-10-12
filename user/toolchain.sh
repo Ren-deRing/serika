@@ -1,6 +1,7 @@
 #!/bin/sh
 # the host's clang and lld, with what they need to compile and link a C program for the glibc already in the initrd.
-# copied to the same paths under $1, because clang finds its parts relative to where it is
+# copied to the same paths under $1, because clang finds its parts relative to where it is. all of it is under /usr:
+# that is the disk. the libraries go in /usr/lib64, which ld.so searches after /lib64
 set -e
 
 root=$1
@@ -19,7 +20,7 @@ copy() {
 progs="/usr/bin/clang-22 /usr/bin/lld /usr/bin/make /usr/bin/ar /usr/bin/ranlib /usr/bin/nm /usr/bin/objcopy /usr/bin/strip"
 copy $progs
 
-mkdir -p "$root/usr/bin" "$root/lib64"
+mkdir -p "$root/usr/bin" "$root/usr/lib64"
 ln -sf clang-22 "$root/usr/bin/clang"
 ln -sf clang-22 "$root/usr/bin/gcc"
 ln -sf clang-22 "$root/usr/bin/cc"
@@ -27,13 +28,17 @@ ln -sf lld "$root/usr/bin/ld.lld"
 ln -sf lld "$root/usr/bin/ld"
 ln -sf make "$root/usr/bin/gmake"
 
-# the shared libraries they load, next to the ones the programs already have
+# the shared libraries they load, except the ones the initrd has
 for lib in $(ldd $progs 2>/dev/null | awk '/=> \//{print $3}' | sort -u); do
-    cp -L "$lib" "$root/lib64/$(basename "$lib")"
+    case $(basename "$lib") in
+        ld-linux-x86-64.so.2|libc.so.6|libm.so.6|libgcc_s.so.1) continue ;;
+    esac
+
+    cp -L "$lib" "$root/usr/lib64/$(basename "$lib")"
 done
 
 # libm.so is a script that asks for this one if it is needed
-cp -L /lib64/libmvec.so.1 "$root/lib64/"
+cp -L /lib64/libmvec.so.1 "$root/usr/lib64/"
 
 # clang's own headers (stddef.h and so on)
 mkdir -p "$root$resource"
@@ -50,5 +55,3 @@ files=$(rpm -ql glibc-devel kernel-headers | grep -E '^/usr/(include/|lib64/(crt
 for f in $files; do
     [ -f "$f" ] && copy "$f"
 done
-
-mkdir -p "$root/tmp"

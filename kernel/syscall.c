@@ -275,6 +275,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_PRLIMIT64:       return sys_prlimit64((int)args[0], (int)args[1], args[2], args[3]);
         case SYS_PSELECT6:        return sys_pselect6((int)args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_PPOLL:           return sys_ppoll(args[0], args[1], args[2], args[3], args[4]);
+        case SYS_MOUNT:           return sys_mount(args[0], args[1], args[2], args[3], args[4]);
         case SYS_FLOCK:           return sys_flock((int)args[0], (int)args[1]);
         case SYS_EVENTFD:         return sys_eventfd2((uint32_t)args[0], 0);
         case SYS_EVENTFD2:        return sys_eventfd2((uint32_t)args[0], (int)args[1]);

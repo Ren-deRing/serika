@@ -88,6 +88,7 @@ bool test_vfs_basic();
 bool test_vfs_initrd();
 bool test_vfs_symlink();
 bool test_vfs_remove();
+bool test_ext4_read();
 bool test_exec();
 bool test_exec_glibc();
 bool test_exec_files();

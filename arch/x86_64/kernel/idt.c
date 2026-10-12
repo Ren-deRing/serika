@@ -5,6 +5,7 @@
 #include <serika/panic.h>
 #include <serika/preempt.h>
 #include <serika/printk.h>
+#include <serika/sched.h>
 #include <serika/signal.h>
 #include <serika/task.h>
 
@@ -69,6 +70,10 @@ notrace void isr_handler(struct trapframe *tf) {
 
         if (hardirq) preempt_count_add(HARDIRQ_OFFSET);
         slot->func(tf, slot->data);
+
+        /* a device that woke a task on this cpu: it runs now, not at the next tick. the handler has eoi'd */
+        if (hardirq && this_cpu_read(rq.need_resched)) preempt_schedule();
+
         if (hardirq) preempt_count_sub(HARDIRQ_OFFSET); /* maybe the count moved with us */
 
         if (tf->cs & 3) exit_to_user(tf, false);

@@ -372,7 +372,7 @@ static void fill_stat(struct inode *inode, struct stat *st) {
 
     mutex_lock(&inode->lock);
 
-    st->st_dev     = 1;
+    st->st_dev     = 1 + inode->dev;
     st->st_ino     = inode->ino;
     st->st_nlink   = inode->nlink;
     st->st_mode    = inode->mode;

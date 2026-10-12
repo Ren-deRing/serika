@@ -85,6 +85,9 @@ notrace void start_init(void) {
     net_init();
     vfs_init();
     initramfs_unpack();
+
+    /* what is big is on the disk */
+    if (vfs_mount("vda", "/usr", "ext4") != 0) printk("init: no disk to mount on /usr\n");
     
     test_run_all();
 

@@ -89,7 +89,25 @@ static int lookup_locked(struct inode *dir, const char *name, size_t len, struct
         return 0;
     }
 
-    return dir->ops->lookup(dir, name, len, out); /* ".." is the fs's */
+    /* the root of a file system goes up to the dir its mount point is in */
+    if (len == 2 && name[0] == '.' && name[1] == '.' && dir->mnt_parent) {
+        iget(dir->mnt_parent);
+        *out = dir->mnt_parent;
+        return 0;
+    }
+
+    int err = dir->ops->lookup(dir, name, len, out); /* ".." is the fs's */
+
+    /* a mount point is the root of what is on it */
+    if (!err && (*out)->mounted) {
+        struct inode *root = (*out)->mounted;
+
+        iget(root);
+        iput(*out);
+        *out = root;
+    }
+
+    return err;
 }
 
 /* one lock at a time: dir is unlocked before we step into what we found */

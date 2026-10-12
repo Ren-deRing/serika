@@ -107,6 +107,7 @@
 #define SYS_PRCTL           157
 #define SYS_ARCH_PRCTL      158
 #define SYS_SYNC            162
+#define SYS_MOUNT           165
 #define SYS_GETTID          186
 #define SYS_TKILL           200
 #define SYS_TIME            201
@@ -230,6 +231,9 @@ long sys_ftruncate(long fd, long len);
 long sys_truncate(long upath, long len);
 long sys_fsync(long fd);
 long sys_utimensat(long dirfd, long upath, long utimes, long flags);
+
+/* fs/mount.c */
+long sys_mount(long usource, long utarget, long utype, long flags, long udata);
 
 /* fs/flock.c */
 long sys_flock(long fd, long op);

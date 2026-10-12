@@ -15,17 +15,17 @@ EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/l
 APPLETS := $(BUILD_DIR)/applets.stamp
 EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS)
 
+# the disk: an ext4 image that the kernel mounts on /usr. a tree is made as the host has it (/usr/...) and the
+# image is what is under usr
+DISK_ROOT := $(BUILD_DIR)/diskroot
+DISK_DIR  := disk
+DISK      := $(BUILD_DIR)/disk.img
+
 # the host's mesa with llvmpipe, and what it loads: llvm is most of it
 MESA := $(BUILD_DIR)/mesa.stamp
-EXEC += $(MESA)
 
 # the host's clang, to compile and link on serika itself
 TOOLCHAIN := $(BUILD_DIR)/toolchain.stamp
-EXEC      += $(TOOLCHAIN)
-
-# the disk: an ext4 image, which the kernel mounts on /usr
-DISK_DIR := disk
-DISK     := $(BUILD_DIR)/disk.img
 
 .PHONY: all $(INITRD) $(DISK)
 
@@ -48,12 +48,12 @@ $(APPLETS): $(INITRD_DIR)/bin/busybox
 
 $(MESA): mesa.sh /usr/lib64/libEGL.so.1
 	@echo "MESA  : llvmpipe"
-	@./mesa.sh $(INITRD_DIR)
+	@./mesa.sh $(DISK_ROOT)
 	@touch $@
 
 $(TOOLCHAIN): toolchain.sh /usr/bin/clang
 	@echo "TOOLCH: clang"
-	@./toolchain.sh $(INITRD_DIR)
+	@./toolchain.sh $(DISK_ROOT)
 	@touch $@
 
 $(INITRD_DIR)/lib64/%: /lib64/%
@@ -63,12 +63,15 @@ $(INITRD_DIR)/lib64/%: /lib64/%
 
 $(INITRD): $(EXEC)
 	@cp -r root/. $(INITRD_DIR)/
+	@mkdir -p $(INITRD_DIR)/tmp $(INITRD_DIR)/usr
 	@echo "CPIO  : $@"
 	@cd $(INITRD_DIR) && find . | LC_ALL=C sort | cpio -o -H newc --quiet > $@
 
-# no journal and no checksums: the kernel reads it without
-$(DISK): $(shell find $(DISK_DIR) -type f)
+# no journal and no checksums: the kernel reads it without. room for what is in it and some for the tail of each block
+$(DISK): $(MESA) $(TOOLCHAIN) $(shell find $(DISK_DIR) -type f)
 	@echo "EXT4  : $@"
+	@mkdir -p $(DISK_ROOT)/usr
+	@cp -r $(DISK_DIR)/. $(DISK_ROOT)/usr/
 	@rm -f $@
-	@mke2fs -q -t ext4 -b 4096 -L serika -m 0 -O ^has_journal,^metadata_csum,^orphan_file,^resize_inode \
-		-E root_owner=0:0 -d $(DISK_DIR) $@ 8M
+	@mke2fs -q -t ext4 -b 4096 -i 8192 -L serika -m 0 -O ^has_journal,^metadata_csum,^orphan_file,^resize_inode \
+		-E root_owner=0:0 -d $(DISK_ROOT)/usr $@ $$(( $$(du -sk $(DISK_ROOT)/usr | cut -f1) * 12 / 10 + 32768 ))K

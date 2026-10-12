@@ -1,5 +1,5 @@
 #!/bin/sh
-# the host's mesa with its software renderer (llvmpipe) and what it loads, copied to the same paths under $1
+# the host's mesa with its software renderer (llvmpipe) and what it loads, copied to the same paths under $1: the disk
 set -e
 
 root=$1
@@ -21,8 +21,12 @@ copy /usr/share/glvnd/egl_vendor.d/50_mesa.json
 ln -sf libdril_dri.so "$root/usr/lib64/dri/swrast_dri.so"
 ln -sf libdril_dri.so "$root/usr/lib64/dri/kms_swrast_dri.so"
 
-# the shared libraries they load: llvm among them
-mkdir -p "$root/lib64"
+# the shared libraries they load: llvm among them. not the ones the initrd has
+mkdir -p "$root/usr/lib64"
 for lib in $(ldd $libs 2>/dev/null | awk '/=> \//{print $3}' | sort -u); do
-    cp -L "$lib" "$root/lib64/$(basename "$lib")"
+    case $(basename "$lib") in
+        ld-linux-x86-64.so.2|libc.so.6|libm.so.6|libgcc_s.so.1) continue ;;
+    esac
+
+    cp -L "$lib" "$root/usr/lib64/$(basename "$lib")"
 done

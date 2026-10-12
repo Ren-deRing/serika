@@ -45,6 +45,7 @@ struct inode_ops {
 
 struct inode {
     uint64_t     ino;
+    uint32_t     dev;   /* which file system, for st_dev: 0 the ramfs. with the ino it is the file */
     uint32_t     mode;  /* S_IF* | permissions */
     uint32_t     nlink;
     uint32_t     rdev;  /* a device: major << 8 | minor */
@@ -58,6 +59,11 @@ struct inode {
 
     const struct inode_ops *ops;
     void        *priv;  /* fs data */
+
+    /* mounts. a dir with a file system on it has its root in mounted: a lookup of the dir gives that instead, and
+     * ".." of the root goes to the dir its mount point is in */
+    struct inode *mounted;
+    struct inode *mnt_parent;
 };
 
 struct file {
@@ -125,6 +131,9 @@ long kernel_getdents(struct file *f, void *buf, size_t n, uint64_t *pos);
 /* kernel buffers. the caller keeps the position */
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
+
+/* source: a block device by name ("vda", or "/dev/vda"). only "ext4", read only */
+int vfs_mount(const char *source, const char *target, const char *type);
 
 struct inode *ramfs_root(void);
 struct inode *ramfs_anon_file(void); /* a file with no name: memfd, shared anonymous memory */
