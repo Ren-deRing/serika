@@ -47,6 +47,9 @@ static uint32_t user_rights(uint32_t prot) {
     return prot ? prot | PROT_USER : 0;
 }
 
+static spinlock_t mm_list_lock = SPINLOCK_INITIALIZER;
+static list_node  mm_list = LIST_HEAD_INIT(mm_list);
+
 struct mm *mm_create(void) {
     struct mm *mm = kmalloc(sizeof(struct mm));
     if (!mm) return NULL;
@@ -64,6 +67,10 @@ struct mm *mm_create(void) {
     mm->brk_start = mm->brk = mm->brk_end = 0;
     mm->mmap_next = MMAP_TOP;
 
+    uint64_t flags = spin_lock_irqsave(&mm_list_lock);
+    list_add_tail(&mm->all, &mm_list);
+    spin_unlock_irqrestore(&mm_list_lock, flags);
+
     return mm;
 }
 
@@ -74,6 +81,11 @@ void mm_get(struct mm *mm) {
 /* never on the mm the cpu is running on: pmap_destroy() skips the active pmap */
 void mm_put(struct mm *mm) {
     if (__atomic_sub_fetch(&mm->users, 1, 4) != 0) return; /* __ATOMIC_ACQ_REL */
+
+    /* off the list: a walk takes no reference of an mm with no users, so after this none has it */
+    uint64_t flags = spin_lock_irqsave(&mm_list_lock);
+    list_del(&mm->all);
+    spin_unlock_irqrestore(&mm_list_lock, flags);
 
     struct vma *vma, *tmp;
 
@@ -508,6 +520,76 @@ static void drop_pages(struct mm *mm, uintptr_t addr, uintptr_t end, uintptr_t *
 
         for (size_t i = 0; i < count; i++) frame_put(frames[i]);
     }
+}
+
+/* a reference of an mm that still has users */
+static bool mm_try_get(struct mm *mm) {
+    uint32_t users = __atomic_load_n(&mm->users, 0); /* __ATOMIC_RELAXED */
+
+    while (users) {
+        if (__atomic_compare_exchange_n(&mm->users, &users, users + 1, false, 0, 0)) return true; /* relaxed */
+    }
+
+    return false;
+}
+
+/* the pages of the file from first to last (page aligned, offsets in it) leave the mappings that share them: the file
+ * gave them up (a hole punched), and a mapping must not go on showing what is not there. a private mapping has its own
+ * copies. no lock held: a fault takes the mm's and then the inode's */
+void mm_unmap_file(struct inode *inode, uint64_t first, uint64_t last) {
+    uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
+    if (!frames_phys) return;
+
+    struct mm *prev = NULL;
+    list_node *n;
+
+    uint64_t flags = spin_lock_irqsave(&mm_list_lock);
+    n = mm_list.next;
+
+    for (;;) {
+        struct mm *mm = NULL;
+
+        for (; n != &mm_list; n = n->next) {
+            struct mm *m = container_of(n, struct mm, all);
+
+            if (mm_try_get(m)) {
+                mm = m;
+                break;
+            }
+        }
+
+        spin_unlock_irqrestore(&mm_list_lock, flags);
+
+        if (prev) mm_put(prev); /* not under the list's lock: the last one takes it */
+        if (!mm) break;
+
+        mutex_lock(&mm->lock);
+
+        struct vma *vma;
+
+        RB_FOREACH(vma, vma_tree, &mm->vmas) {
+            if (!vma->shared || !vma->file || vma->file->inode != inode) continue;
+
+            uint64_t lo = vma->off > first ? vma->off : first;
+            uint64_t hi = vma->off + (vma->end - vma->start);
+
+            if (hi > last) hi = last;
+            if (lo >= hi) continue;
+
+            uintptr_t va = vma->start + (lo - vma->off);
+
+            drop_pages(mm, va, va + (hi - lo), (uintptr_t *)P2V(frames_phys));
+        }
+
+        mutex_unlock(&mm->lock);
+
+        prev = mm;
+
+        flags = spin_lock_irqsave(&mm_list_lock);
+        n = mm->all.next; /* it is on the list: we hold a reference */
+    }
+
+    free_pages((void *)frames_phys, 0);
 }
 
 /* mm->lock held. page tables stay until mm_put() */

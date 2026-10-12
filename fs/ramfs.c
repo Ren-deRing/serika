@@ -329,6 +329,34 @@ static int ramfs_truncate(struct inode *inode, uint64_t size) {
     return 0;
 }
 
+/* the pages inside the range go, and the ends of the ones it only cuts are zeroed. a page that is mapped stays in the
+ * mappings it is in: they keep what they saw until they are unmapped */
+static int ramfs_punch_hole(struct inode *inode, uint64_t off, uint64_t len) {
+    struct ramfs_node *node = node_of(inode);
+    uint64_t end = off + len;
+
+    for (uint64_t pos = off; pos < end;) {
+        size_t idx = pos >> PAGE_SHIFT;
+        size_t in_page = pos & (PAGE_SIZE - 1);
+        size_t c = PAGE_SIZE - in_page;
+
+        if (c > end - pos) c = end - pos;
+
+        if (idx < node->npages && node->pages[idx]) {
+            if (c == PAGE_SIZE) {
+                frame_put(node->pages[idx]);
+                node->pages[idx] = 0;
+            } else {
+                memset((void *)P2V(node->pages[idx] + in_page), 0, c);
+            }
+        }
+
+        pos += c;
+    }
+
+    return 0;
+}
+
 /* entries 0 and 1 are "." and "..", then the list in order */
 static long ramfs_getdents(struct inode *dir, void *buf, size_t n, uint64_t *pos) {
     struct ramfs_node *node = node_of(dir);
@@ -394,6 +422,7 @@ static const struct inode_ops ramfs_ops = {
     .read       = ramfs_read,
     .write      = ramfs_write,
     .truncate   = ramfs_truncate,
+    .punch_hole = ramfs_punch_hole,
     .getpage    = ramfs_getpage,
     .getdents   = ramfs_getdents,
     .evict      = ramfs_evict,

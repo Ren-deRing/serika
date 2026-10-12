@@ -28,6 +28,7 @@ struct inode_ops {
     long (*write)(struct inode *inode, const void *buf, size_t n, uint64_t pos);
     long (*ioctl)(struct inode *inode, unsigned long cmd, unsigned long arg); /* no lock held: arg is user memory */
     int  (*truncate)(struct inode *inode, uint64_t size);
+    int  (*punch_hole)(struct inode *inode, uint64_t off, uint64_t len); /* what is read there is zeros, the size stays. inside the size. lock held */
     long (*getdents)(struct inode *dir, void *buf, size_t n, uint64_t *pos); /* linux_dirent64s, pos is the entry */
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
 
@@ -132,6 +133,7 @@ int  vfs_rename(const char *oldpath, const char *newpath);
 int  vfs_link(const char *oldpath, const char *newpath); /* a hard link */
 int  vfs_chmod(struct inode *inode, uint32_t mode);
 int  vfs_truncate(struct inode *inode, uint64_t size);
+int  vfs_punch_hole(struct inode *inode, uint64_t off, uint64_t len); /* fallocate(PUNCH_HOLE) */
 long vfs_readlink(struct inode *inode, char *buf, size_t n);
 void inode_touch(struct inode *inode); /* its data or entries changed: mtime and ctime, lock held */
 

@@ -331,22 +331,12 @@ long sys_pread64(long fd, long buf, long count, long off) {
 }
 
 
-long sys_write(long fd, long buf, long count) {
-    if (count < 0) return -EINVAL;
-
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
+/* count bytes from user memory to the file at *pos, a page at a time. the position is the caller's to keep */
+static long write_from_user(struct file *f, long buf, long count, uint64_t *pos) {
     uintptr_t bounce = (uintptr_t)alloc_pages(0);
-    if (!bounce) {
-        vfs_close(f);
-        return -ENOMEM;
-    }
+    if (!bounce) return -ENOMEM;
 
     long done = 0;
-    bool lock = !is_stream(f->inode);
-
-    if (lock) mutex_lock(&f->pos_lock);
 
     while (done < count) {
         size_t n = count - done;
@@ -358,7 +348,7 @@ long sys_write(long fd, long buf, long count) {
             break;
         }
 
-        long r = kernel_write(f, (void *)P2V(bounce), n, &f->pos);
+        long r = kernel_write(f, (void *)P2V(bounce), n, pos);
         if (r <= 0) {
             if (!done) done = r;
             break;
@@ -368,11 +358,37 @@ long sys_write(long fd, long buf, long count) {
         if ((size_t)r < n) break;
     }
 
+    free_pages((void *)bounce, 0);
+    return done;
+}
+
+long sys_write(long fd, long buf, long count) {
+    if (count < 0) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    bool lock = !is_stream(f->inode);
+
+    if (lock) mutex_lock(&f->pos_lock);
+    long done = write_from_user(f, buf, count, &f->pos);
     if (lock) mutex_unlock(&f->pos_lock);
 
-    free_pages((void *)bounce, 0);
     vfs_close(f);
     return done;
+}
+
+long sys_pwrite64(long fd, long buf, long count, long off) {
+    if (count < 0 || off < 0) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    uint64_t pos = off;
+    long ret = is_stream(f->inode) ? -ESPIPE : write_from_user(f, buf, count, &pos);
+
+    vfs_close(f);
+    return ret;
 }
 
 long sys_lseek(long fd, long off, long whence) {
@@ -1411,12 +1427,15 @@ int anon_fd(struct inode *inode, uint32_t flags, bool cloexec) {
     return fd;
 }
 
-#define FALLOC_FL_KEEP_SIZE 0x01
+#define FALLOC_FL_KEEP_SIZE  0x01
+#define FALLOC_FL_PUNCH_HOLE 0x02 /* only with KEEP_SIZE */
 
-/* space for a file that grows with its writes anyway: the size is all there is to give. no holes punched */
+/* space for a file that grows with its writes anyway: the size is all there is to give. and holes: the range reads as
+ * zeros, and its pages are given back */
 long sys_fallocate(long fd, long mode, long off, long len) {
     if (off < 0 || len <= 0) return -EINVAL;
-    if (mode & ~FALLOC_FL_KEEP_SIZE) return -EOPNOTSUPP;
+    if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE)) return -EOPNOTSUPP;
+    if ((mode & FALLOC_FL_PUNCH_HOLE) && !(mode & FALLOC_FL_KEEP_SIZE)) return -EOPNOTSUPP;
 
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
@@ -1425,6 +1444,7 @@ long sys_fallocate(long fd, long mode, long off, long len) {
 
     if ((f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH)) err = -EBADF;
     else if (!S_ISREG(f->inode->mode)) err = -ENODEV;
+    else if (mode & FALLOC_FL_PUNCH_HOLE) err = vfs_punch_hole(f->inode, off, len);
     else if (!(mode & FALLOC_FL_KEEP_SIZE) && (uint64_t)off + len > f->inode->size) err = vfs_truncate(f->inode, off + len);
 
     vfs_close(f);

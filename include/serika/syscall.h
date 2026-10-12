@@ -20,6 +20,7 @@
 #define SYS_RT_SIGRETURN     15
 #define SYS_IOCTL            16
 #define SYS_PREAD64          17
+#define SYS_PWRITE64         18
 #define SYS_READV            19
 #define SYS_WRITEV           20
 #define SYS_ACCESS           21
@@ -190,6 +191,7 @@ long sys_statfs(long upath, long ubuf);
 long sys_fstatfs(long fd, long ubuf);
 long sys_ioctl(long fd, long cmd, long arg);
 long sys_pread64(long fd, long buf, long count, long off);
+long sys_pwrite64(long fd, long buf, long count, long off);
 long sys_access(long upath, long mode);
 long sys_faccessat(long dirfd, long upath, long mode);
 long sys_readv(long fd, long uiov, long count);

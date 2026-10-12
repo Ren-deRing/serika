@@ -1,5 +1,6 @@
 #include <serika/errno.h>
 #include <serika/fcntl.h>
+#include <serika/mm.h>
 #include <serika/page.h>
 #include <serika/panic.h>
 #include <serika/poll.h>
@@ -713,6 +714,32 @@ int vfs_truncate(struct inode *inode, uint64_t size) {
     int err = inode->ops->truncate(inode, size);
     if (!err) inode_touch(inode);
     mutex_unlock(&inode->lock);
+
+    return err;
+}
+
+/* the part of the range inside the size */
+int vfs_punch_hole(struct inode *inode, uint64_t off, uint64_t len) {
+    if (!inode->ops->punch_hole) return -EOPNOTSUPP;
+
+    mutex_lock(&inode->lock);
+
+    int err = 0;
+
+    if (off < inode->size) {
+        if (len > inode->size - off) len = inode->size - off;
+
+        err = inode->ops->punch_hole(inode, off, len);
+        if (!err) inode_touch(inode);
+    }
+
+    mutex_unlock(&inode->lock);
+
+    /* the pages it gave up are mapped no more. the cut ones are zeroed where they are, and the maps show that. a fault in
+     * between finds a hole, which is zeros */
+    uint64_t first = ALIGN_UP(off, PAGE_SIZE), last = ALIGN_DOWN(off + len, PAGE_SIZE);
+
+    if (!err && first < last) mm_unmap_file(inode, first, last);
 
     return err;
 }

@@ -142,6 +142,7 @@ static const char *syscall_name(long nr) {
         case SYS_LSEEK: return "lseek";           case SYS_MMAP: return "mmap";
         case SYS_MPROTECT: return "mprotect";     case SYS_MUNMAP: return "munmap";
         case SYS_IOCTL: return "ioctl";           case SYS_PREAD64: return "pread64";
+        case SYS_PWRITE64: return "pwrite64";
         case SYS_ACCESS: return "access";         case SYS_PIPE: return "pipe";
         case SYS_DUP: return "dup";               case SYS_DUP2: return "dup2";
         case SYS_SOCKET: return "socket";         case SYS_CONNECT: return "connect";
@@ -224,6 +225,7 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
         case SYS_IOCTL:           return sys_ioctl(args[0], (uint32_t)args[1], args[2]);
         case SYS_PREAD64:         return sys_pread64(args[0], args[1], args[2], args[3]);
+        case SYS_PWRITE64:        return sys_pwrite64(args[0], args[1], args[2], args[3]);
         case SYS_READV:           return sys_readv(args[0], args[1], args[2]);
         case SYS_WRITEV:          return sys_writev(args[0], args[1], args[2]);
         case SYS_POLL:            return sys_poll(args[0], args[1], (int)args[2]);

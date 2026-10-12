@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -78,6 +79,47 @@ int main(void) {
     if (!q) return 24;
     memset(q, 2, 1 << 20);
     free(q);
+
+    /* fallocate: a hole is zeros, the size stays, and what is around it stays. without keeping the size it is refused */
+    int mfd = memfd_create("hole", 0);
+    if (mfd < 0) return 25;
+
+    char *page = malloc(3 * 4096);
+    if (!page) return 26;
+    memset(page, 7, 3 * 4096);
+    if (write(mfd, page, 3 * 4096) != 3 * 4096) return 27;
+
+    if (fallocate(mfd, FALLOC_FL_PUNCH_HOLE, 0, 4096) != -1 || errno != EOPNOTSUPP) return 28;
+    if (fallocate(mfd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 4096 - 16, 4096 + 32) != 0) return 29; /* cuts two pages, drops none */
+    if (fallocate(mfd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 2 * 4096, 4096 * 4) != 0) return 30; /* past the end too */
+
+    if (fstat(mfd, &st) != 0 || st.st_size != 3 * 4096) return 31;
+
+    memset(page, 1, 3 * 4096);
+    if (pread(mfd, page, 3 * 4096, 0) != 3 * 4096) return 32;
+    for (int i = 0; i < 3 * 4096; i++) {
+        int hole = (i >= 4096 - 16 && i < 2 * 4096 + 16) || i >= 2 * 4096;
+        if (page[i] != (hole ? 0 : 7)) return 33;
+    }
+
+    /* a mapping that has the pages in does not go on showing them: a whole page and the cut end of another */
+    memset(page, 9, 3 * 4096);
+    if (pwrite(mfd, page, 3 * 4096, 0) != 3 * 4096) return 34;
+
+    volatile char *map = mmap(NULL, 3 * 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, 0);
+    if (map == MAP_FAILED) return 35;
+    if (map[0] != 9 || map[4096] != 9 || map[2 * 4096] != 9) return 36; /* faulted in */
+
+    if (fallocate(mfd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 4096, 4096 + 100) != 0) return 37;
+    if (map[4096] != 0 || map[2 * 4096 - 1] != 0 || map[2 * 4096 + 99] != 0) return 38;
+    if (map[0] != 9 || map[2 * 4096 + 100] != 9 || map[3 * 4096 - 1] != 9) return 39;
+
+    map[4096 + 5] = 3; /* and the hole is a page again */
+    if (map[4096 + 5] != 3 || map[4096 + 6] != 0) return 40;
+
+    munmap((void *)map, 3 * 4096);
+    free(page);
+    close(mfd);
 
     printf("files: all checks passed\n");
     return 0x5e;

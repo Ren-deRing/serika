@@ -1,5 +1,6 @@
 #pragma once
 
+#include <serika/list.h>
 #include <serika/lock.h>
 #include <serika/mutex.h>
 #include <serika/pmap.h>
@@ -19,6 +20,7 @@
 #define MAP_FIXED_NOREPLACE 0x100000
 
 struct file;
+struct inode;
 
 struct vma {
     uintptr_t    start;
@@ -43,6 +45,8 @@ struct mm {
     uintptr_t        brk;       /* break */
     uintptr_t        brk_end;   /* end of the heap vma */
     uintptr_t        mmap_next; /* the next mmap ends here. */
+
+    list_node        all;       /* every mm: mm_list_lock. in it from mm_create() until the last user is gone */
 };
 
 static inline int vma_cmp(struct vma *a, struct vma *b) {
@@ -72,6 +76,7 @@ int mm_write(struct mm *mm, uintptr_t addr, const void *src, size_t size);
 struct mm *mm_fork(struct mm *old);
 int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot);
 int mm_unmap(struct mm *mm, uintptr_t addr, size_t size);
+void mm_unmap_file(struct inode *inode, uint64_t first, uint64_t last); /* the pages of [first, last) of a file, out of every mapping that shares them */
 int mm_discard(struct mm *mm, uintptr_t addr, size_t size);
 long mm_remap(struct mm *mm, uintptr_t old, size_t old_size, size_t new_size, bool may_move);
 long mm_mmap(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot, uint32_t flags, struct file *file, uint64_t off);
