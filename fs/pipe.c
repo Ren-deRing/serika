@@ -85,8 +85,7 @@ static long pipe_write(struct file *f, const void *buf, size_t n) {
         if (!p->readers) {
             spin_unlock_irqrestore(&p->lock, flags);
 
-            struct ksiginfo info = { .signo = SIGPIPE, .code = SI_USER, .pid = sys_getpid() };
-            send_signal(current_task(), SIGPIPE, &info);
+            send_sigpipe();
 
             return done ? (long)done : -EPIPE;
         }

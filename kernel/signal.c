@@ -89,6 +89,31 @@ bool signal_pending(struct task *t) {
     return (pending & ~blocked) != 0;
 }
 
+bool signal_pending_in(uint64_t mask) {
+    return (__atomic_load_n(&current_task()->pending, 2) & mask) != 0; /* __ATOMIC_ACQUIRE */
+}
+
+/* a signalfd reads it: no handler runs for it */
+int signal_take(uint64_t mask, struct ksiginfo *info) {
+    struct task *curr = current_task();
+    struct sighand *sh = curr->sighand;
+    int sig = 0;
+
+    uint64_t flags = spin_lock_irqsave(&sh->lock);
+
+    uint64_t ready = curr->pending & mask;
+
+    if (ready) {
+        sig = __builtin_ctzll(ready) + 1;
+        __atomic_and_fetch(&curr->pending, ~sigmask(sig), 5); /* __ATOMIC_SEQ_CST */
+
+        *info = curr->siginfo[sig - 1];
+    }
+
+    spin_unlock_irqrestore(&sh->lock, flags);
+    return sig;
+}
+
 /* a sleeper wakes and finds it, a runner on another cpu comes into the kernel and finds it */
 static void signal_wake(struct task *t) {
     if (!wake_up_process(t)) sched_kick(t);
@@ -236,6 +261,13 @@ long sys_rt_sigsuspend(long uset, long size) {
     if (err) return err;
 
     return wait_for_signal();
+}
+
+/* a write to something nobody reads: the signal, to the thread that wrote */
+void send_sigpipe(void) {
+    struct ksiginfo info = { .signo = SIGPIPE, .code = SI_USER, .pid = sys_getpid() };
+
+    send_signal(current_task(), SIGPIPE, &info);
 }
 
 long sys_rt_sigaction(long sig, long act, long oact, long sigsetsize) {

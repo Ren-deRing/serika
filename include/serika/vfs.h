@@ -97,6 +97,7 @@ void iput(struct inode *inode);
 int  vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out);
 void vfs_close(struct file *f); /* drops a reference */
 void fget(struct file *f);
+void flock_release(struct file *f); /* fs/flock.c. the file's last reference is going: its flock is let go */
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
 int  vfs_symlink(const char *target, const char *path);
@@ -139,7 +140,10 @@ struct files *files_create(void); /* 0, 1 and 2 on the console */
 void files_get(struct files *files);
 void files_put(struct files *files);
 struct files *files_copy(struct files *old);
+int fd_install(struct files *files, struct file *f, bool cloexec, int min); /* the lowest free fd from min takes our reference */
 struct file *fd_get(long fd); /* the current task's, referenced. vfs_close() when done */
+int  anon_fd(struct inode *inode, uint32_t flags, bool cloexec); /* a nameless file on inode (eventfd, epoll) in the current task. takes the reference, which is dropped on failure */
 void files_close_on_exec(struct files *files);
 
+int path_from_kernel(const char *s, char **out); /* the same, for a string in the kernel */
 int path_from_user(long dirfd, uintptr_t upath, char **out);

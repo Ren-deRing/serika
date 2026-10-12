@@ -92,6 +92,9 @@ void sighand_put(struct sighand *sh);
 int  send_signal(struct task *t, int sig, const struct ksiginfo *info);
 void force_sig(int sig, const struct ksiginfo *info); /* the current task, even blocked or ignored */
 bool signal_pending(struct task *t);
+bool signal_pending_in(uint64_t mask); /* the current task has one of these, blocked or not */
+int  signal_take(uint64_t mask, struct ksiginfo *info); /* one of them off the current task's pending: its number, 0 for none */
+void send_sigpipe(void);
 
 /* return to user: the next signal to act on, 0 for none */
 int  signal_dequeue(struct ksiginfo *info, struct k_sigaction *ka);

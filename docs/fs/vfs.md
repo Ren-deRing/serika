@@ -145,6 +145,8 @@ registering is seen by the second, what does after wakes it. `select` and `psele
 their sets into pollfds and back, `ppoll` and `pselect6` take a signal mask
 ([docs/signal.md](../signal.md)). A poll is never restarted: `-EINTR`.
 
+`epoll`, `eventfd`, `timerfd`, `signalfd` and `flock` are in [events.md](events.md).
+
 ## Random
 
 `get_random_bytes()` is ChaCha20 with fast key erasure, seeded at boot from `RDSEED` (or `RDRAND`)

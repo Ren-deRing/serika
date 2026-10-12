@@ -282,6 +282,7 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
     if (dir) iput(dir);
     kfree(work);
 
+    if (!err && S_ISSOCK(inode->mode) && !(flags & O_PATH)) err = -ENXIO;
     if (!err && (flags & O_DIRECTORY) && !S_ISDIR(inode->mode)) err = -ENOTDIR;
     if (!err && S_ISDIR(inode->mode) && (flags & O_ACCMODE) != O_RDONLY) err = -EISDIR;
 
@@ -333,6 +334,8 @@ void fget(struct file *f) {
 
 void vfs_close(struct file *f) {
     if (__atomic_sub_fetch(&f->refs, 1, 4) != 0) return; /* __ATOMIC_ACQ_REL */
+
+    flock_release(f);
 
     if (f->inode->ops->release && !(f->flags & O_PATH)) f->inode->ops->release(f->inode, f->flags);
 

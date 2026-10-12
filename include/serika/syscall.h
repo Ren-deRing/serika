@@ -35,6 +35,21 @@
 #define SYS_NANOSLEEP        35
 #define SYS_GETPID           39
 #define SYS_SENDFILE         40
+#define SYS_SOCKET           41
+#define SYS_CONNECT          42
+#define SYS_ACCEPT           43
+#define SYS_SENDTO           44
+#define SYS_RECVFROM         45
+#define SYS_SENDMSG          46
+#define SYS_RECVMSG          47
+#define SYS_SHUTDOWN         48
+#define SYS_BIND             49
+#define SYS_LISTEN           50
+#define SYS_GETSOCKNAME      51
+#define SYS_GETPEERNAME      52
+#define SYS_SOCKETPAIR       53
+#define SYS_SETSOCKOPT       54
+#define SYS_GETSOCKOPT       55
 #define SYS_CLONE            56
 #define SYS_FORK             57
 #define SYS_VFORK            58
@@ -44,6 +59,7 @@
 #define SYS_KILL             62
 #define SYS_UNAME            63
 #define SYS_FCNTL            72
+#define SYS_FLOCK            73
 #define SYS_FSYNC            74
 #define SYS_FDATASYNC        75
 #define SYS_TRUNCATE         76
@@ -97,11 +113,14 @@
 #define SYS_FUTEX           202
 #define SYS_SCHED_SETAFFINITY 203
 #define SYS_SCHED_GETAFFINITY 204
+#define SYS_EPOLL_CREATE    213
 #define SYS_GETDENTS64      217
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_CLOCK_GETTIME   228
 #define SYS_CLOCK_NANOSLEEP 230
 #define SYS_EXIT_GROUP      231
+#define SYS_EPOLL_WAIT      232
+#define SYS_EPOLL_CTL       233
 #define SYS_TGKILL          234
 #define SYS_OPENAT          257
 #define SYS_MKDIRAT         258
@@ -119,10 +138,22 @@
 #define SYS_PPOLL           271
 #define SYS_SET_ROBUST_LIST 273
 #define SYS_UTIMENSAT       280
+#define SYS_EPOLL_PWAIT     281
+#define SYS_SIGNALFD        282
+#define SYS_TIMERFD_CREATE  283
+#define SYS_EVENTFD         284
 #define SYS_FALLOCATE       285
+#define SYS_TIMERFD_SETTIME 286
+#define SYS_TIMERFD_GETTIME 287
+#define SYS_ACCEPT4         288
+#define SYS_SIGNALFD4       289
+#define SYS_EVENTFD2        290
+#define SYS_EPOLL_CREATE1   291
 #define SYS_DUP3            292
 #define SYS_PIPE2           293
+#define SYS_RECVMMSG        299
 #define SYS_PRLIMIT64       302
+#define SYS_SENDMMSG        307
 #define SYS_GETCPU          309
 #define SYS_RENAMEAT2       316
 #define SYS_GETRANDOM       318
@@ -130,6 +161,7 @@
 #define SYS_RSEQ            334
 #define SYS_CLONE3          435
 #define SYS_FACCESSAT2      439
+#define SYS_EPOLL_PWAIT2    441
 
 #define WNOHANG 1
 
@@ -154,6 +186,26 @@ long sys_readv(long fd, long uiov, long count);
 long sys_writev(long fd, long uiov, long count);
 long sys_sendfile(long out_fd, long in_fd, long uoff, long count);
 long sys_memfd_create(long uname, long flags);
+
+/* net/socket.c */
+long sys_socket(long domain, long type, long protocol);
+long sys_socketpair(long domain, long type, long protocol, long usv);
+long sys_bind(long fd, long uaddr, long ulen);
+long sys_listen(long fd, long backlog);
+long sys_connect(long fd, long uaddr, long ulen);
+long sys_accept(long fd, long uaddr, long ulenp);
+long sys_accept4(long fd, long uaddr, long ulenp, long flags);
+long sys_getsockname(long fd, long uaddr, long ulenp);
+long sys_getpeername(long fd, long uaddr, long ulenp);
+long sys_shutdown(long fd, long how);
+long sys_sendto(long fd, long ubuf, long len, long flags, long uaddr, long ulen);
+long sys_recvfrom(long fd, long ubuf, long len, long flags, long uaddr, long ulenp);
+long sys_sendmsg(long fd, long umsg, long flags);
+long sys_recvmsg(long fd, long umsg, long flags);
+long sys_sendmmsg(long fd, long uvec, long vlen, long flags);
+long sys_recvmmsg(long fd, long uvec, long vlen, long flags, long utimeout);
+long sys_setsockopt(long fd, long level, long name, long uval, long len);
+long sys_getsockopt(long fd, long level, long name, long uval, long ulenp);
 long sys_fallocate(long fd, long mode, long off, long len);
 long sys_pipe2(long ufds, long flags);
 long sys_dup(long fd);
@@ -178,6 +230,28 @@ long sys_ftruncate(long fd, long len);
 long sys_truncate(long upath, long len);
 long sys_fsync(long fd);
 long sys_utimensat(long dirfd, long upath, long utimes, long flags);
+
+/* fs/flock.c */
+long sys_flock(long fd, long op);
+
+/* fs/eventfd.c */
+long sys_eventfd2(long initval, long flags);
+
+/* fs/timerfd.c */
+long sys_timerfd_create(long clock, long flags);
+long sys_timerfd_settime(long fd, long flags, long unew, long uold);
+long sys_timerfd_gettime(long fd, long ucur);
+
+/* fs/signalfd.c */
+long sys_signalfd4(long fd, long umask, long size, long flags);
+
+/* fs/epoll.c */
+long sys_epoll_create(long size);
+long sys_epoll_create1(long flags);
+long sys_epoll_ctl(long epfd, long op, long fd, long uevent);
+long sys_epoll_wait(long epfd, long uevents, long maxevents, long timeout_ms);
+long sys_epoll_pwait(long epfd, long uevents, long maxevents, long timeout_ms, long usigmask, long sigsetsize);
+long sys_epoll_pwait2(long epfd, long uevents, long maxevents, long utsp, long usigmask, long sigsetsize);
 
 /* kernel/random.c */
 long sys_getrandom(long ubuf, long len, long flags);

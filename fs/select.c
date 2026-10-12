@@ -86,7 +86,7 @@ static void poll_timeout(struct timer *t) {
 }
 
 /* timeout: tsc ticks, 0 not to wait, negative for ever. the count of ready fds, or -EINTR */
-static long poll_core(struct pollfd *fds, unsigned nfds, int64_t timeout) {
+long poll_core(struct pollfd *fds, unsigned nfds, int64_t timeout) {
     struct poll_sleep s = { .timer = { .fn = poll_timeout } };
     struct poll_table pt;
 
@@ -145,7 +145,7 @@ static long poll_core(struct pollfd *fds, unsigned nfds, int64_t timeout) {
     return ret;
 }
 
-static int64_t ms_to_tsc(int64_t ms) {
+int64_t ms_to_tsc(int64_t ms) {
     return ms * (int64_t)this_cpu_read(tsc_freq_hz) / 1000;
 }
 
@@ -172,7 +172,7 @@ long sys_poll(long ufds, long nfds, long timeout_ms) {
 }
 
 /* a timespec as ticks to wait, -1 for none */
-static long timeout_from_timespec(long utsp, int64_t *timeout) {
+long timeout_from_timespec(long utsp, int64_t *timeout) {
     uint64_t t;
 
     *timeout = -1;

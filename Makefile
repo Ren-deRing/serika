@@ -27,7 +27,7 @@ KOFFSETS_HEADER := $(BASE_DIR)/include/serika/offsets.h
 OFFSETS += include/serika/cpu.h cpu include/serika/task.h task include/serika/pmap.h pmap
 
 # Except for drivers.
-SUBDIRS := kernel init arch mm fs tests
+SUBDIRS := kernel init arch mm fs net tests
 
 include drivers/Makefile
 
@@ -173,7 +173,7 @@ run: build
 	@qemu-system-x86_64 \
 		-machine q35 \
 		-cdrom $(IMAGE) \
-		-m 1G \
+		-m 4G \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
 		-chardev stdio,id=ser0,signal=off \

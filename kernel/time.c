@@ -48,7 +48,7 @@ uint64_t realtime_ns(void) {
     return tsc / freq * NSEC_PER_SEC + tsc % freq * NSEC_PER_SEC / freq;
 }
 
-static int clock_tsc(long clk, uint64_t *tsc) {
+int clock_tsc(long clk, uint64_t *tsc) {
     switch (clk) {
         case CLOCK_REALTIME:
         case CLOCK_REALTIME_COARSE:

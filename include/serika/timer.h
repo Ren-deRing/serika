@@ -21,6 +21,8 @@ void time_init(void);                /* after cpu_init() */
 uint64_t realtime_ns(void);          /* since 1970 */
 uint64_t realtime_to_tsc(uint64_t t);
 
+int clock_tsc(long clk, uint64_t *tsc); /* a clock's now, in ticks. -EINVAL: no such clock */
+
 long sleep_until(uint64_t deadline); /* tsc. a signal ends it early: -EINTR */
 
 /* a user struct timespec as a tsc count */

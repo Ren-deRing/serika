@@ -3,7 +3,7 @@ INITRD     := $(BUILD_DIR)/initrd.cpio
 
 # against the host's shared glibc: ld.so and the libraries go in /lib64
 GLIBC_CC   := clang
-GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo
+GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo sockets events
 
 # what a program needs beyond libc and libm
 LIBS_gltest := -lEGL -lGLESv2
@@ -19,7 +19,7 @@ EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS)
 MESA := $(BUILD_DIR)/mesa.stamp
 EXEC += $(MESA)
 
-# the host's gcc, to compile and link on serika itself
+# the host's clang, to compile and link on serika itself
 TOOLCHAIN := $(BUILD_DIR)/toolchain.stamp
 EXEC      += $(TOOLCHAIN)
 
@@ -47,8 +47,8 @@ $(MESA): mesa.sh /usr/lib64/libEGL.so.1
 	@./mesa.sh $(INITRD_DIR)
 	@touch $@
 
-$(TOOLCHAIN): toolchain.sh /usr/bin/gcc
-	@echo "TOOLCH: gcc"
+$(TOOLCHAIN): toolchain.sh /usr/bin/clang
+	@echo "TOOLCH: clang"
 	@./toolchain.sh $(INITRD_DIR)
 	@touch $@
 

@@ -14,6 +14,7 @@
 #include <serika/serial.h>
 #include <serika/buddy.h>
 #include <serika/slab.h>
+#include <serika/socket.h>
 #include <serika/sched.h>
 #include <serika/symbol.h>
 #include <serika/syscall.h>
@@ -76,6 +77,7 @@ notrace void start_init(void) {
     ioapic_init();
     serial_tty_init();
 
+    net_init();
     vfs_init();
     initramfs_unpack();
     

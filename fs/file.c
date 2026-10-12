@@ -10,6 +10,7 @@
 #include <serika/string.h>
 #include <serika/syscall.h>
 #include <serika/task.h>
+#include <serika/uio.h>
 #include <serika/vfs.h>
 
 /* never changed once made: chdir swaps the pointer */
@@ -72,7 +73,7 @@ static void cloexec_set(struct files *files, int fd, bool on) {
 }
 
 /* the lowest free fd from min takes our reference */
-static int fd_install(struct files *files, struct file *f, bool cloexec, int min) {
+int fd_install(struct files *files, struct file *f, bool cloexec, int min) {
     int fd = -EMFILE;
 
     uint64_t flags = spin_lock_irqsave(&files->lock);
@@ -128,6 +129,27 @@ static long cwd_prepend(char *buf, long len) {
 
     spin_unlock_irqrestore(&files->lock, flags);
     return ret;
+}
+
+/* the same for a path that is already in the kernel */
+int path_from_kernel(const char *s, char **out) {
+    size_t len = strnlen(s, PATH_MAX);
+    if (len == 0) return -ENOENT;
+    if (len == PATH_MAX) return -ENAMETOOLONG;
+
+    char *buf = kmalloc(PATH_MAX);
+    if (!buf) return -ENOMEM;
+
+    memcpy(buf, s, len + 1);
+
+    long ret = buf[0] == '/' ? len : cwd_prepend(buf, len);
+    if (ret < 0) {
+        kfree(buf);
+        return ret;
+    }
+
+    *out = buf;
+    return 0;
 }
 
 /* a relative path starts at the cwd. no directory fds as a start yet */
@@ -399,9 +421,35 @@ long sys_newfstatat(long dirfd, long upath, long ubuf, long flags) {
 }
 
 /* the device's own: a tty answers termios, the window, the foreground */
+#define FIONBIO  0x5421
+#define FIONCLEX 0x5450
+#define FIOCLEX  0x5451
+
 long sys_ioctl(long fd, long cmd, long arg) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
+
+    /* those of every file */
+    if (cmd == FIONBIO) {
+        int32_t on;
+        long err = copy_from_user(&on, arg, sizeof(on));
+
+        if (!err) __atomic_store_n(&f->flags, on ? f->flags | O_NONBLOCK : f->flags & ~O_NONBLOCK, 0); /* __ATOMIC_RELAXED */
+
+        vfs_close(f);
+        return err;
+    }
+
+    if (cmd == FIOCLEX || cmd == FIONCLEX) {
+        struct files *files = current_task()->files;
+        uint64_t fl = spin_lock_irqsave(&files->lock);
+
+        if (files->fd[fd]) cloexec_set(files, fd, cmd == FIOCLEX);
+
+        spin_unlock_irqrestore(&files->lock, fl);
+        vfs_close(f);
+        return 0;
+    }
 
     const struct inode_ops *ops = f->inode->ops;
     long ret = ops->ioctl ? ops->ioctl(f->inode, cmd, arg) : -ENOTTY;
@@ -812,13 +860,6 @@ long sys_symlinkat(long utarget, long dirfd, long ulink) {
     return err;
 }
 
-struct iovec {
-    uint64_t base;
-    uint64_t len;
-};
-
-#define IOV_MAX 1024
-
 /* one read or write per vector, as long as each one is filled */
 static long iov_rw(long fd, long uiov, long count, long (*rw)(long, long, long)) {
     long total = 0;
@@ -1133,6 +1174,19 @@ long sys_memfd_create(long uname, long flags) {
     }
 
     int fd = fd_install(current_task()->files, f, flags & MFD_CLOEXEC, 0);
+    if (fd < 0) vfs_close(f);
+
+    return fd;
+}
+
+int anon_fd(struct inode *inode, uint32_t flags, bool cloexec) {
+    struct file *f = file_alloc(inode, flags);
+    if (!f) {
+        iput(inode);
+        return -ENOMEM;
+    }
+
+    int fd = fd_install(current_task()->files, f, cloexec, 0);
     if (fd < 0) vfs_close(f);
 
     return fd;

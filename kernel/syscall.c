@@ -158,6 +158,24 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_PIPE:            return sys_pipe2(args[0], 0);
         case SYS_DUP:             return sys_dup(args[0]);
         case SYS_DUP2:            return sys_dup2(args[0], args[1]);
+        case SYS_SOCKET:          return sys_socket((int)args[0], (int)args[1], (int)args[2]);
+        case SYS_CONNECT:         return sys_connect((int)args[0], args[1], (int)args[2]);
+        case SYS_ACCEPT:          return sys_accept((int)args[0], args[1], args[2]);
+        case SYS_SENDTO:          return sys_sendto((int)args[0], args[1], args[2], (int)args[3], args[4], (int)args[5]);
+        case SYS_RECVFROM:        return sys_recvfrom((int)args[0], args[1], args[2], (int)args[3], args[4], args[5]);
+        case SYS_SENDMSG:         return sys_sendmsg((int)args[0], args[1], (int)args[2]);
+        case SYS_RECVMSG:         return sys_recvmsg((int)args[0], args[1], (int)args[2]);
+        case SYS_SHUTDOWN:        return sys_shutdown((int)args[0], (int)args[1]);
+        case SYS_BIND:            return sys_bind((int)args[0], args[1], (int)args[2]);
+        case SYS_LISTEN:          return sys_listen((int)args[0], (int)args[1]);
+        case SYS_GETSOCKNAME:     return sys_getsockname((int)args[0], args[1], args[2]);
+        case SYS_GETPEERNAME:     return sys_getpeername((int)args[0], args[1], args[2]);
+        case SYS_SOCKETPAIR:      return sys_socketpair((int)args[0], (int)args[1], (int)args[2], args[3]);
+        case SYS_SETSOCKOPT:      return sys_setsockopt((int)args[0], (int)args[1], (int)args[2], args[3], (int)args[4]);
+        case SYS_GETSOCKOPT:      return sys_getsockopt((int)args[0], (int)args[1], (int)args[2], args[3], args[4]);
+        case SYS_ACCEPT4:         return sys_accept4((int)args[0], args[1], args[2], (int)args[3]);
+        case SYS_RECVMMSG:        return sys_recvmmsg((int)args[0], args[1], (int)args[2], (int)args[3], args[4]);
+        case SYS_SENDMMSG:        return sys_sendmmsg((int)args[0], args[1], (int)args[2], (int)args[3]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
         case SYS_SENDFILE:        return sys_sendfile(args[0], args[1], args[2], args[3]);
         case SYS_PAUSE:           return sys_pause();
@@ -257,6 +275,20 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_PRLIMIT64:       return sys_prlimit64((int)args[0], (int)args[1], args[2], args[3]);
         case SYS_PSELECT6:        return sys_pselect6((int)args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_PPOLL:           return sys_ppoll(args[0], args[1], args[2], args[3], args[4]);
+        case SYS_FLOCK:           return sys_flock((int)args[0], (int)args[1]);
+        case SYS_EVENTFD:         return sys_eventfd2((uint32_t)args[0], 0);
+        case SYS_EVENTFD2:        return sys_eventfd2((uint32_t)args[0], (int)args[1]);
+        case SYS_TIMERFD_CREATE:  return sys_timerfd_create((int)args[0], (int)args[1]);
+        case SYS_TIMERFD_SETTIME: return sys_timerfd_settime((int)args[0], (int)args[1], args[2], args[3]);
+        case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime((int)args[0], args[1]);
+        case SYS_SIGNALFD:        return sys_signalfd4((int)args[0], args[1], args[2], 0);
+        case SYS_SIGNALFD4:       return sys_signalfd4((int)args[0], args[1], args[2], (int)args[3]);
+        case SYS_EPOLL_CREATE:    return sys_epoll_create((int)args[0]);
+        case SYS_EPOLL_CREATE1:   return sys_epoll_create1((int)args[0]);
+        case SYS_EPOLL_CTL:       return sys_epoll_ctl((int)args[0], (int)args[1], (int)args[2], args[3]);
+        case SYS_EPOLL_WAIT:      return sys_epoll_wait((int)args[0], args[1], (int)args[2], (int)args[3]);
+        case SYS_EPOLL_PWAIT:     return sys_epoll_pwait((int)args[0], args[1], (int)args[2], (int)args[3], args[4], args[5]);
+        case SYS_EPOLL_PWAIT2:    return sys_epoll_pwait2((int)args[0], args[1], (int)args[2], args[3], args[4], args[5]);
         case SYS_FACCESSAT:       return sys_faccessat((int)args[0], args[1], args[2]);
         case SYS_FACCESSAT2:      return sys_faccessat((int)args[0], args[1], args[2]); /* flags: no users to tell apart */
     }

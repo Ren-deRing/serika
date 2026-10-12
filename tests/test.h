@@ -94,6 +94,8 @@ bool test_tty_ldisc();
 bool test_exec_busybox();
 bool test_exec_syscalls();
 bool test_exec_gl();
+bool test_exec_sockets();
+bool test_exec_events();
 
 bool test_signal_fault();
 bool test_signal_kill();
