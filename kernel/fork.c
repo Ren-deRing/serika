@@ -118,11 +118,6 @@ long sys_vfork(void) {
 }
 
 long sys_wait4(long pid, long ustatus, long options, long urusage) {
-    if (pid == 0 || pid < -1) {
-        printk("syscall: wait4 for pid %ld not supported -- task %lu\n", pid, current_task()->id);
-        return -EINVAL; /* no process groups yet */
-    }
-
     long status = 0;
     long ret = task_waitpid(pid, &status, options & WNOHANG);
     if (ret <= 0) return ret;

@@ -89,17 +89,49 @@ static int step(struct inode *dir, const char *name, size_t len, struct inode **
     return err;
 }
 
-/* a reference on the dir holding the last name. "/" has none: len 0 */
-static int walk_parent(const char *path, struct inode **dir, const char **last, size_t *last_len) {
-    if (path[0] != '/') return -ENOENT;
-    if (strnlen(path, PATH_MAX) == PATH_MAX) return -ENAMETOOLONG;
+#define SYMLINK_MAX 40
 
-    struct inode *cur = vfs_root;
-    iget(cur);
+long vfs_readlink(struct inode *inode, char *buf, size_t n) {
+    if (!S_ISLNK(inode->mode) || !inode->ops->readlink) return -EINVAL;
 
+    mutex_lock(&inode->lock);
+    long r = inode->ops->readlink(inode, buf, n);
+    mutex_unlock(&inode->lock);
+
+    return r;
+}
+
+/* work holds a path whose component before rest is the link. it becomes the link's target followed by rest.
+ * 1 if the target starts at the root, 0 if at the dir the link is in */
+static int splice_link(char *work, const char *rest, struct inode *link) {
+    char *tmp = kmalloc(PATH_MAX);
+    if (!tmp) return -ENOMEM;
+
+    long len = vfs_readlink(link, tmp, PATH_MAX - 1);
+    size_t rest_len = strlen(rest);
+
+    if (len <= 0 || len + rest_len >= PATH_MAX) {
+        kfree(tmp);
+        return len <= 0 ? -ENOENT : -ENAMETOOLONG;
+    }
+
+    memcpy(tmp + len, rest, rest_len + 1); /* rest is in work: before it is written over */
+    memcpy(work, tmp, len + rest_len + 1);
+
+    int abs = tmp[0] == '/';
+
+    kfree(tmp);
+    return abs;
+}
+
+/* a reference on the dir holding the last name of work, which is a PATH_MAX buffer and is rewritten where a link
+ * is followed: *last points into it. "/" has none: len 0. cur, a reference, is where it starts and is consumed.
+ * the last name itself is not followed */
+static int walk_parent(struct inode *cur, char *work, const char **last, size_t *last_len, struct inode **dir,
+                       int *links) {
     const char *name;
     size_t len;
-    const char *rest = next_name(path, &name, &len);
+    const char *rest = next_name(work, &name, &len);
 
     for (;;) {
         const char *next_n;
@@ -111,8 +143,33 @@ static int walk_parent(const char *path, struct inode **dir, const char **last, 
         struct inode *next;
         int err = step(cur, name, len, &next);
 
+        if (err) {
+            iput(cur);
+            return err;
+        }
+
+        if (S_ISLNK(next->mode)) {
+            if (++*links > SYMLINK_MAX) err = -ELOOP;
+            else err = splice_link(work, rest, next);
+
+            iput(next);
+
+            if (err < 0) {
+                iput(cur);
+                return err;
+            }
+
+            if (err == 1) {
+                iput(cur);
+                cur = vfs_root;
+                iget(cur);
+            }
+
+            rest = next_name(work, &name, &len);
+            continue;
+        }
+
         iput(cur);
-        if (err) return err;
 
         cur  = next;
         name = next_n;
@@ -126,17 +183,42 @@ static int walk_parent(const char *path, struct inode **dir, const char **last, 
     return 0;
 }
 
+/* walk_parent() from the root, on a copy of path: *work is the caller's to free */
+static int walk_path(const char *path, char **work, struct inode **dir, const char **last, size_t *len,
+                     int *links) {
+    if (path[0] != '/') return -ENOENT;
+    if (strnlen(path, PATH_MAX) == PATH_MAX) return -ENAMETOOLONG;
+
+    *work = kmalloc(PATH_MAX);
+    if (!*work) return -ENOMEM;
+
+    strcpy(*work, path);
+
+    iget(vfs_root);
+
+    int err = walk_parent(vfs_root, *work, last, len, dir, links);
+    if (err) kfree(*work);
+
+    return err;
+}
+
 int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out) {
     struct inode *dir, *inode = NULL;
     const char *name;
     size_t len;
+    char *work;
+    int links = 0;
 
-    int err = walk_parent(path, &dir, &name, &len);
+    int err = walk_path(path, &work, &dir, &name, &len, &links);
     if (err) return err;
 
-    if (len == 0) {
-        inode = dir; /* "/" */
-    } else {
+    for (;;) {
+        if (len == 0) {
+            inode = dir; /* "/" */
+            dir = NULL;
+            break;
+        }
+
         if (!S_ISDIR(dir->mode)) err = -ENOTDIR;
         else if (len > NAME_MAX) err = -ENAMETOOLONG;
 
@@ -154,8 +236,36 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
             mutex_unlock(&dir->lock);
         }
 
-        iput(dir);
+        if (err || !S_ISLNK(inode->mode)) break;
+
+        /* a link is followed from the dir it is in, unless asked to stop at it */
+        if (flags & O_NOFOLLOW) {
+            if (!(flags & O_PATH)) err = -ELOOP;
+            break;
+        }
+
+        err = ++links > SYMLINK_MAX ? -ELOOP : splice_link(work, "", inode);
+
+        iput(inode);
+        inode = NULL;
+
+        if (err < 0) break;
+
+        struct inode *start = dir;
+        dir = NULL;
+
+        if (err == 1) {
+            iput(start);
+            start = vfs_root;
+            iget(start);
+        }
+
+        err = walk_parent(start, work, &name, &len, &dir, &links);
+        if (err) break;
     }
+
+    if (dir) iput(dir);
+    kfree(work);
 
     if (!err && (flags & O_DIRECTORY) && !S_ISDIR(inode->mode)) err = -ENOTDIR;
     if (!err && S_ISDIR(inode->mode) && (flags & O_ACCMODE) != O_RDONLY) err = -EISDIR;
@@ -205,54 +315,28 @@ void vfs_close(struct file *f) {
     kfree(f);
 }
 
-int vfs_mkdir(const char *path, uint32_t mode) {
-    struct inode *dir, *inode = NULL;
-    const char *name;
-    size_t len;
-
-    int err = walk_parent(path, &dir, &name, &len);
-    if (err) return err;
-
-    if (len == 0) err = -EEXIST; /* "/" */
-    else if (!S_ISDIR(dir->mode)) err = -ENOTDIR;
-    else if (len > NAME_MAX) err = -ENAMETOOLONG;
-
-    if (!err) {
-        mutex_lock(&dir->lock);
-
-        err = lookup_locked(dir, name, len, &inode);
-
-        if (err == -ENOENT) err = dir->ops->create(dir, name, len, S_IFDIR | (mode & 07777), &inode);
-        else if (!err)      err = -EEXIST;
-
-        mutex_unlock(&dir->lock);
-    }
-
-    iput(dir);
-    if (inode) iput(inode);
-
-    return err;
-}
-
-int vfs_link_inode(const char *path, struct inode *inode) {
+/* name in path is made in its dir by make(). an existing one is EEXIST */
+static int vfs_make(const char *path, int (*make)(struct inode *dir, const char *name, size_t len, void *arg),
+                    void *arg) {
     struct inode *dir, *found = NULL;
     const char *name;
     size_t len;
+    char *work;
+    int links = 0;
 
-    int err = walk_parent(path, &dir, &name, &len);
+    int err = walk_path(path, &work, &dir, &name, &len, &links);
     if (err) return err;
 
     if (len == 0) err = -EEXIST; /* "/" */
     else if (!S_ISDIR(dir->mode)) err = -ENOTDIR;
     else if (len > NAME_MAX) err = -ENAMETOOLONG;
-    else if (!dir->ops->link) err = -EPERM;
 
     if (!err) {
         mutex_lock(&dir->lock);
 
         err = lookup_locked(dir, name, len, &found);
 
-        if (err == -ENOENT) err = dir->ops->link(dir, name, len, inode);
+        if (err == -ENOENT) err = make(dir, name, len, arg);
         else if (!err)      err = -EEXIST;
 
         mutex_unlock(&dir->lock);
@@ -261,13 +345,52 @@ int vfs_link_inode(const char *path, struct inode *inode) {
     iput(dir);
     if (found) iput(found);
 
+    kfree(work);
     return err;
+}
+
+static int make_dir(struct inode *dir, const char *name, size_t len, void *arg) {
+    struct inode *inode;
+
+    int err = dir->ops->create(dir, name, len, S_IFDIR | (*(uint32_t *)arg & 07777), &inode);
+    if (!err) iput(inode);
+
+    return err;
+}
+
+int vfs_mkdir(const char *path, uint32_t mode) {
+    return vfs_make(path, make_dir, &mode);
+}
+
+static int make_symlink(struct inode *dir, const char *name, size_t len, void *arg) {
+    struct inode *inode;
+
+    if (!dir->ops->symlink) return -EPERM;
+
+    int err = dir->ops->symlink(dir, name, len, arg, &inode);
+    if (!err) iput(inode);
+
+    return err;
+}
+
+int vfs_symlink(const char *target, const char *path) {
+    return vfs_make(path, make_symlink, (void *)target);
+}
+
+static int make_link(struct inode *dir, const char *name, size_t len, void *arg) {
+    if (!dir->ops->link) return -EPERM;
+
+    return dir->ops->link(dir, name, len, arg);
+}
+
+int vfs_link_inode(const char *path, struct inode *inode) {
+    return vfs_make(path, make_link, inode);
 }
 
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
     struct inode *inode = f->inode;
 
-    if ((f->flags & O_ACCMODE) == O_WRONLY) return -EBADF;
+    if ((f->flags & O_ACCMODE) == O_WRONLY || (f->flags & O_PATH)) return -EBADF;
     if (S_ISDIR(inode->mode)) return -EISDIR;
     if (!inode->ops->read) return -EINVAL;
 
@@ -284,7 +407,7 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
     struct inode *inode = f->inode;
 
-    if ((f->flags & O_ACCMODE) == O_RDONLY) return -EBADF;
+    if ((f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH)) return -EBADF;
     if (!inode->ops->write) return -EINVAL;
 
     if (inode->ops->stream) return inode->ops->write(inode, buf, n, *pos);

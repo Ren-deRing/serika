@@ -3,6 +3,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/random.h>
@@ -126,6 +128,37 @@ int main(void) {
     off_t off = 2;
     if (n > 3 && (sendfile(q[1], fd, &off, 1) != 1 || off != 3)) return 26;
     close(fd);
+
+    /* process groups: a child of its own, signalled and waited for through it */
+    pid = fork();
+    if (pid < 0) return 29;
+
+    if (pid == 0) {
+        if (setpgid(0, 0) != 0 || getpgrp() != getpid()) _exit(1);
+
+        pause();
+        _exit(2);
+    }
+
+    if (getpgid(pid) != getpgrp() && getpgid(pid) != pid) return 30; /* before or after the child's own setpgid */
+    if (setpgid(pid, pid) != 0 || getpgid(pid) != pid) return 31;
+    if (getpgrp() == pid) return 32;
+
+    if (kill(-pid, SIGTERM) != 0) {
+        printf("syscalls: kill(-%d) failed -- errno %d\n", pid, errno);
+        return 33;
+    }
+
+    if (waitpid(-pid, &status, 0) != pid || !WIFSIGNALED(status) || WTERMSIG(status) != SIGTERM) return 34;
+    if (kill(-pid, 0) == 0 || errno != ESRCH) return 35;
+
+    /* a session of its own is not for a group's leader */
+    pid = fork();
+    if (pid < 0) return 36;
+
+    if (pid == 0) _exit(setsid() == getpid() && getsid(0) == getpid() ? 0 : 1);
+
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 37;
 
     /* a thread that ends holding a robust mutex leaves it owner-died */
     pthread_mutexattr_t at;

@@ -18,19 +18,13 @@ long sys_setuid(long id) {
     return id == 0 ? 0 : -EPERM;
 }
 
-/* a process is a group of its own, no job control */
-long sys_getpgrp(void) {
-    return sys_getpid();
-}
-
-/* the abi is linux's, and glibc parses the release */
 long sys_uname(long ubuf) {
     struct { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; } u;
 
     memset(&u, 0, sizeof(u));
     strcpy(u.sysname, "serika");
     strcpy(u.nodename, "serika");
-    strcpy(u.release, "6.1.0");
+    strcpy(u.release, "0.0.1");
     strcpy(u.version, "serika");
     strcpy(u.machine, "x86_64");
     strcpy(u.domainname, "(none)");

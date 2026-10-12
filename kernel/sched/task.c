@@ -111,7 +111,7 @@ static struct tgroup *tgroup_alloc(struct task *leader) {
     struct tgroup *g = kmalloc(sizeof(struct tgroup));
     if (!g) return NULL;
 
-    *g = (struct tgroup){ .users = 1, .tgid = leader->id, .live = 1, .leader = leader };
+    *g = (struct tgroup){ .users = 1, .tgid = leader->id, .pgid = leader->id, .sid = leader->id, .live = 1, .leader = leader };
     list_init(&g->threads);
 
     return g;
@@ -218,6 +218,14 @@ int task_fork(const struct trapframe *tf, struct task **out) {
     }
 
     task->blocked = curr->blocked;
+
+    /* same group and session until it says otherwise. the caller's is read under the lock: setpgid() */
+    if (curr->group) {
+        uint64_t f = spin_lock_irqsave(&tasklist_lock);
+        g->pgid = curr->group->pgid;
+        g->sid = curr->group->sid;
+        spin_unlock_irqrestore(&tasklist_lock, f);
+    }
 
     user_task_attach(task, g, mm, files, sighand);
 
@@ -452,15 +460,20 @@ void task_dead(struct task *task) {
 }
 
 /* 0: not exited yet, -ECHILD: no such child */
+/* pid: a child, -1 any, 0 one in the caller's group, below -1 one in group -pid */
 static long reap_child(struct task *curr, long pid, long *status) {
     struct task *zombie = NULL;
     bool found = false;
 
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
 
+    long pgid = pid < -1 ? -pid : curr->group ? (long)curr->group->pgid : (long)curr->id;
+
     for (list_node *n = curr->children.next; n != &curr->children; n = n->next) {
         struct task *c = container_of(n, struct task, sibling);
-        if (pid != -1 && (long)c->id != pid) continue;
+
+        if (pid > 0 && (long)c->id != pid) continue;
+        if (pid < 1 && pid != -1 && (c->group ? (long)c->group->pgid : (long)c->id) != pgid) continue;
 
         found = true;
 
@@ -621,4 +634,115 @@ long sys_getppid(void) {
     spin_unlock_irqrestore(&tasklist_lock, f);
 
     return ppid;
+}
+
+/* tasklist_lock held. the leader of the process pid, if there is one */
+static struct task *process_find(long pid) {
+    struct task *t = pid_find(pid);
+
+    return t && t->group && t->group->tgid == (uint64_t)pid ? t : NULL;
+}
+
+/* tasklist_lock held. is anyone in the group, of that session */
+static bool pgrp_exists(uint64_t pgid, uint64_t sid) {
+    for (int i = 0; i < PID_HASH; i++) {
+        for (struct task *t = pid_hash[i]; t; t = t->pid_next)
+            if (t->group && t->group->leader == t && t->group->pgid == pgid && t->group->sid == sid) return true;
+    }
+
+    return false;
+}
+
+int task_signal_pgrp(long pgid, int sig, const struct ksiginfo *info) {
+    int err = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    for (int i = 0; i < PID_HASH; i++) {
+        for (struct task *t = pid_hash[i]; t; t = t->pid_next) {
+            if (!t->group || t->group->leader != t || t->group->pgid != (uint64_t)pgid) continue;
+
+            err = 0;
+            if (sig) group_signal(t, sig, info);
+        }
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return err;
+}
+
+long sys_getpgid(long pid) {
+    struct task *curr = current_task();
+    long ret = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = pid ? process_find(pid) : curr->group->leader;
+    if (t) ret = t->group->pgid;
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return ret;
+}
+
+long sys_getpgrp(void) {
+    return sys_getpgid(0);
+}
+
+long sys_getsid(long pid) {
+    struct task *curr = current_task();
+    long ret = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = pid ? process_find(pid) : curr->group->leader;
+    if (t) ret = t->group->sid;
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return ret;
+}
+
+/* the caller or one of its children, into an existing group of its session or a new one of its own */
+long sys_setpgid(long pid, long pgid) {
+    struct task *leader = current_task()->group->leader;
+    long ret = 0;
+
+    if (pgid < 0) return -EINVAL;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = pid ? process_find(pid) : leader;
+
+    if (!t || (t != leader && t->parent != leader)) {
+        ret = -ESRCH;
+    } else if ((uint64_t)(pgid ? pgid : t->group->tgid) == t->group->pgid) {
+        ret = 0; /* already there. the first process is a session leader, and its shell asks for this */
+    } else if (t->group->sid != leader->group->sid || t->group->sid == t->group->tgid) {
+        ret = -EPERM; /* another session's, or a session leader */
+    } else {
+        if (!pgid) pgid = t->group->tgid;
+
+        if ((uint64_t)pgid != t->group->tgid && !pgrp_exists(pgid, t->group->sid)) ret = -EPERM;
+        else t->group->pgid = pgid;
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return ret;
+}
+
+/* a session of its own, and the group in it. not for a group's leader: its group has members to leave behind */
+long sys_setsid(void) {
+    struct tgroup *g = current_task()->group;
+    long ret;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    if (g->pgid == g->tgid) {
+        ret = -EPERM;
+    } else {
+        g->sid = g->pgid = g->tgid;
+        ret = g->tgid;
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return ret;
 }

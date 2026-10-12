@@ -47,6 +47,17 @@ The cwd is an absolute, normalized string in `struct files` (refcounted, swapped
 The console is the uart's tty, a char device: see [docs/tty.md](../tty.md). `/dev/console`,
 `/dev/tty` and `/dev/ttyS0` are three names for its one inode, linked by `vfs_init()`.
 
+## Symlinks
+
+A symlink is an inode (`S_IFLNK`) with its target as a string (`readlink`). `walk_parent()` works on
+a copy of the path in a `PATH_MAX` buffer: where a component is a link, the buffer becomes the target
+followed by what was left, and the walk goes on from the root (an absolute target) or from the dir the
+link was in (a relative one). `vfs_open()` follows a link at the end the same way, 40 in all, then
+`ELOOP`. `O_NOFOLLOW` stops at it: `ELOOP`, or with `O_PATH` the link itself, which `lstat` and
+`readlink` use and which nothing can be read from or written to. `symlink` is an inode op like
+`create`, under the dir's lock, and so is `link` (a name for an inode that exists: `/dev`). The initrd
+carries links as cpio entries of type `S_IFLNK`, the target as data.
+
 ## Pipes
 
 A pipe is an inode with `stream` set in its ops: `read` and `write` run without the inode

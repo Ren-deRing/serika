@@ -64,6 +64,22 @@ static int unpack_file(const char *path, uint32_t mode, const void *data, size_t
     return 0;
 }
 
+/* the data is the target, without a nul */
+static int unpack_symlink(const char *path, const uint8_t *data, size_t size) {
+    if (size == 0 || size >= PATH_MAX) return -EINVAL;
+
+    char *target = kmalloc(size + 1);
+    if (!target) return -ENOMEM;
+
+    memcpy(target, data, size);
+    target[size] = '\0';
+
+    int err = vfs_symlink(target, path);
+
+    kfree(target);
+    return err;
+}
+
 /* task context: the vfs sleeps */
 void initramfs_unpack(void) {
     if (!g_bootinfo.initrd.size) {
@@ -80,7 +96,7 @@ void initramfs_unpack(void) {
         return;
     }
 
-    uint32_t files = 0, dirs = 0;
+    uint32_t files = 0, dirs = 0, links = 0;
     size_t off = 0;
 
     while (off + sizeof(struct cpio_newc) <= size) {
@@ -129,6 +145,9 @@ void initramfs_unpack(void) {
         } else if (S_ISREG(mode)) {
             err = unpack_file(path, mode, base + data_at, filesize);
             if (!err) files++;
+        } else if (S_ISLNK(mode)) {
+            err = unpack_symlink(path, base + data_at, filesize);
+            if (!err) links++;
         } else {
             printk("initramfs: skipping %s -- type 0%o not supported\n", path, mode & S_IFMT);
             continue;
@@ -138,5 +157,5 @@ void initramfs_unpack(void) {
     }
 
     kfree(path);
-    printk("initramfs: %u files, %u dirs\n", files, dirs);
+    printk("initramfs: %u files, %u dirs, %u links\n", files, dirs, links);
 }

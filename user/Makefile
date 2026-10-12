@@ -7,8 +7,9 @@ GLIBC_BINS := hello files signals fork threads syscalls
 GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libgcc_s.so.1
 EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 
-# the host's busybox, static
-EXEC += $(INITRD_DIR)/bin/busybox
+# the host's busybox, static, and a link to it for each applet
+APPLETS := $(BUILD_DIR)/applets.stamp
+EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS)
 
 .PHONY: all $(INITRD)
 
@@ -23,6 +24,11 @@ $(INITRD_DIR)/bin/busybox: /usr/bin/busybox
 	@mkdir -p $(dir $@)
 	@echo "CP    : $@"
 	@cp -L $< $@
+
+$(APPLETS): $(INITRD_DIR)/bin/busybox
+	@echo "LN    : busybox applets"
+	@for a in $$($< --list); do ln -sf busybox $(INITRD_DIR)/bin/$$a; done
+	@touch $@
 
 $(INITRD_DIR)/lib64/%: /lib64/%
 	@mkdir -p $(dir $@)

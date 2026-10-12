@@ -1,6 +1,7 @@
 #include <serika/cpu.h>
 #include <serika/errno.h>
 #include <serika/mm.h>
+#include <serika/preempt.h>
 #include <serika/printk.h>
 #include <serika/sched.h>
 #include <serika/signal.h>
@@ -212,6 +213,28 @@ void sigmask_unswap(long ret) {
     if (ret != -EINTR) sigmask_restore();
 }
 
+/* until a signal comes. never restarted */
+static long wait_for_signal(void) {
+    struct wait_queue wq;
+
+    wait_queue_init(&wq);
+
+    wait_event_interruptible(wq, false);
+    return -EINTR;
+}
+
+long sys_pause(void) {
+    return wait_for_signal();
+}
+
+/* the mask is the call's own until the handler of the signal that ends it is set up */
+long sys_rt_sigsuspend(long uset, long size) {
+    int err = sigmask_swap(uset, size);
+    if (err) return err;
+
+    return wait_for_signal();
+}
+
 long sys_rt_sigaction(long sig, long act, long oact, long sigsetsize) {
     struct task *curr = current_task();
     struct sighand *sh = curr->sighand;
@@ -290,12 +313,19 @@ static long kill_one(long pid, long sig, int code) {
 }
 
 long sys_kill(long pid, long sig) {
-    if (pid <= 0) {
-        printk("syscall: kill to pid %ld not supported -- task %lu\n", pid, current_task()->id);
-        return -ENOSYS; /* no process groups yet */
+    if (pid == -1) {
+        printk("syscall: kill to every process not supported -- task %lu\n", current_task()->id);
+        return -ENOSYS;
     }
 
-    return kill_one(pid, sig, SI_USER);
+    if (pid > 0) return kill_one(pid, sig, SI_USER);
+
+    /* 0: the caller's group, below -1: group -pid */
+    struct ksiginfo info = { .signo = sig, .code = SI_USER, .pid = sys_getpid() };
+
+    if (sig < 0 || sig > NSIG) return -EINVAL;
+
+    return task_signal_pgrp(pid == 0 ? sys_getpgrp() : -pid, sig, &info);
 }
 
 /* that thread, wherever its process is */

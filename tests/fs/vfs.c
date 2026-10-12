@@ -96,3 +96,61 @@ bool test_vfs_initrd() {
     vfs_close(f);
     return true;
 }
+
+/* reads the file at path and compares it with "data" */
+static bool holds_data(const char *path) {
+    struct file *f;
+    char buf[8];
+    uint64_t pos = 0;
+
+    if (vfs_open(path, O_RDONLY, 0, &f) != 0) return false;
+
+    bool ok = kernel_read(f, buf, sizeof(buf), &pos) == 4 && memcmp(buf, "data", 4) == 0;
+
+    vfs_close(f);
+    return ok;
+}
+
+bool test_vfs_symlink() {
+    struct file *f;
+    uint64_t pos = 0;
+    char buf[16];
+
+    TEST_ASSERT(vfs_mkdir("/l", 0755) == 0);
+    TEST_ASSERT(vfs_mkdir("/l/d", 0755) == 0);
+    TEST_ASSERT(vfs_open("/l/d/file", O_RDWR | O_CREAT, 0644, &f) == 0);
+    TEST_ASSERT(kernel_write(f, "data", 4, &pos) == 4);
+    vfs_close(f);
+
+    /* a relative target starts at the dir the link is in, an absolute one at the root */
+    TEST_ASSERT(vfs_symlink("d/file", "/l/rel") == 0);
+    TEST_ASSERT(vfs_symlink("/l/d", "/l/dirlink") == 0);
+    TEST_ASSERT(vfs_symlink("rel", "/l/chain") == 0);
+    TEST_ASSERT(vfs_symlink("/l/rel", "/l/rel") == -EEXIST);
+
+    TEST_ASSERT(holds_data("/l/rel"));
+    TEST_ASSERT(holds_data("/l/chain"));
+    TEST_ASSERT(holds_data("/l/dirlink/file"));
+    TEST_ASSERT(holds_data("/l/dirlink/../rel")); /* .. of the dir the link points at */
+
+    /* the link itself: stat it, read where it points, but not open it */
+    TEST_ASSERT(vfs_open("/l/rel", O_RDONLY | O_NOFOLLOW, 0, &f) == -ELOOP);
+    TEST_ASSERT(vfs_open("/l/rel", O_PATH | O_NOFOLLOW, 0, &f) == 0);
+    TEST_ASSERT(S_ISLNK(f->inode->mode) && f->inode->size == 6);
+    TEST_ASSERT(vfs_readlink(f->inode, buf, sizeof(buf)) == 6 && memcmp(buf, "d/file", 6) == 0);
+    TEST_ASSERT(kernel_read(f, buf, sizeof(buf), &pos) == -EBADF);
+    vfs_close(f);
+
+    /* a loop, and a link to nothing, which opening with O_CREAT makes */
+    TEST_ASSERT(vfs_symlink("/l/b", "/l/a") == 0);
+    TEST_ASSERT(vfs_symlink("/l/a", "/l/b") == 0);
+    TEST_ASSERT(vfs_open("/l/a", O_RDONLY, 0, &f) == -ELOOP);
+
+    TEST_ASSERT(vfs_symlink("later", "/l/dangling") == 0);
+    TEST_ASSERT(vfs_open("/l/dangling", O_RDONLY, 0, &f) == -ENOENT);
+    TEST_ASSERT(vfs_open("/l/dangling", O_RDWR | O_CREAT, 0644, &f) == 0);
+    vfs_close(f);
+    TEST_ASSERT(vfs_open("/l/later", O_RDONLY, 0, &f) == 0);
+    vfs_close(f);
+    return true;
+}

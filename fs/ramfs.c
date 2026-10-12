@@ -19,6 +19,9 @@ struct ramfs_node {
     uintptr_t     *pages;   /* phys of each page, 0: a hole */
     size_t         npages;  /* slots in pages, fills its buddy block */
 
+    /* symlink */
+    char          *target;
+
     /* dir */
     list_node      entries;
     struct inode  *parent;  /* no reference: dirs are never removed yet */
@@ -98,6 +101,42 @@ static int ramfs_create(struct inode *dir, const char *name, size_t len, uint32_
     iget(inode);
     *out = inode;
     return 0;
+}
+
+static int ramfs_symlink(struct inode *dir, const char *name, size_t len, const char *target, struct inode **out) {
+    size_t tlen = strlen(target);
+    if (tlen >= PATH_MAX) return -ENAMETOOLONG;
+
+    struct ramfs_dirent *d = kmalloc(sizeof(struct ramfs_dirent) + len);
+    char *copy = kmalloc(tlen + 1);
+    struct inode *inode = (d && copy) ? ramfs_new(S_IFLNK | 0777, dir) : NULL;
+
+    if (!inode) {
+        kfree(d);
+        kfree(copy);
+        return -ENOMEM;
+    }
+
+    memcpy(copy, target, tlen + 1);
+    node_of(inode)->target = copy;
+    inode->size = tlen;
+
+    d->inode = inode;
+    d->len   = len;
+    memcpy(d->name, name, len);
+    list_add_tail(&d->node, &node_of(dir)->entries);
+
+    iget(inode);
+    *out = inode;
+    return 0;
+}
+
+static long ramfs_readlink(struct inode *inode, char *buf, size_t n) {
+    size_t len = inode->size;
+    if (len > n) len = n;
+
+    memcpy(buf, node_of(inode)->target, len);
+    return len;
 }
 
 static int ramfs_link(struct inode *dir, const char *name, size_t len, struct inode *inode) {
@@ -251,6 +290,7 @@ static void ramfs_evict(struct inode *inode) {
 
     for (size_t i = 0; i < node->npages; i++) free_pages((void *)node->pages[i], 0);
     ramfs_free_slots(node);
+    kfree(node->target);
 
     while (!list_empty(&node->entries)) {
         struct ramfs_dirent *d = list_first(&node->entries, struct ramfs_dirent, node);
@@ -266,6 +306,8 @@ static void ramfs_evict(struct inode *inode) {
 static const struct inode_ops ramfs_ops = {
     .lookup   = ramfs_lookup,
     .create   = ramfs_create,
+    .symlink  = ramfs_symlink,
+    .readlink = ramfs_readlink,
     .link     = ramfs_link,
     .read     = ramfs_read,
     .write    = ramfs_write,

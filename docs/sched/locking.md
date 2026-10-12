@@ -121,6 +121,11 @@ leader's id. `tasklist_lock` covers the group's thread list, its count of live t
 - `task_group_exit()` (`exit_group()`, a fatal signal) marks the group exiting with its code
   and sends `SIGKILL` to the other threads, under `tasklist_lock`. That code becomes the
   process's status.
+- A process has a group id and a session id (`pgid`, `sid`, in the `tgroup`, under `tasklist_lock`).
+  A fork inherits both, the first process is its own. `setpgid()` is for the caller and its
+  children, into a group of the session or a new one named by the process's own id; `setsid()` is
+  refused for a group's leader. `kill(0)`, `kill(-pgid)`, `wait4(0)` and `wait4(-pgid)` work on
+  them, and `task_signal_pgrp()` walks the pid hash for the leaders in a group.
 - Each thread drops its mm on the way out (`exit_mm()`): off its cr3 first, then the put. A
   zombie holds no address space.
 

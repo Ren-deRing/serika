@@ -143,10 +143,10 @@ static long tty_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg)
             return copy_to_user(arg, &n, sizeof(n));
         }
 
-        /* no sessions: the foreground is whoever it was told, else the asker */
+        /* the foreground group is whoever set it, else the asker's own */
         case TIOCGPGRP: {
             flags = spin_lock_irqsave(&tty->lock);
-            int32_t pgrp = tty->pgrp ? tty->pgrp : sys_getpid();
+            int32_t pgrp = tty->pgrp ? tty->pgrp : sys_getpgrp();
             spin_unlock_irqrestore(&tty->lock, flags);
 
             return copy_to_user(arg, &pgrp, sizeof(pgrp));
@@ -191,7 +191,7 @@ static long tty_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg)
             return 0;
 
         case TIOCGSID: {
-            int32_t sid = sys_getpid();
+            int32_t sid = sys_getsid(0);
 
             return copy_to_user(arg, &sid, sizeof(sid));
         }

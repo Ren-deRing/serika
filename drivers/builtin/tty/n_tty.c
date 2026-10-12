@@ -140,7 +140,7 @@ static void n_tty_receive_buf(struct tty_struct *tty, const uint8_t *cp, size_t 
     for (int sig = 1; sig <= NSIG && pgrp; sig++) {
         struct ksiginfo info = { .signo = sig, .code = SI_KERNEL };
 
-        if (sigs & sigmask(sig)) task_signal(pgrp, sig, &info);
+        if (sigs & sigmask(sig)) task_signal_pgrp(pgrp, sig, &info);
     }
 }
 

@@ -32,6 +32,8 @@ struct task;
 struct tgroup {
     uint32_t     users;     /* tasks pointing at it, atomic */
     uint64_t     tgid;      /* the leader's id, getpid() */
+    uint64_t     pgid;      /* process group and session: a process id. tasklist_lock */
+    uint64_t     sid;
     uint32_t     live;      /* threads that have not exited */
     list_node    threads;   /* the live ones, by group_node */
     struct task *leader;    /* reaped last: a zombie until live is 0 */
@@ -116,4 +118,5 @@ int task_clone_thread(const struct trapframe *tf, struct task **out);
 void task_group_exit(long code);
 int task_signal_thread(long tgid, long tid, int sig, const struct ksiginfo *info); /* tgid 0: any */
 void task_exec_mm(struct mm *mm);
+int task_signal_pgrp(long pgid, int sig, const struct ksiginfo *info); /* every process in it */
 int task_signal(long pid, int sig, const struct ksiginfo *info); /* the process. sig 0: is it there */

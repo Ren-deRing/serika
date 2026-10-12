@@ -44,8 +44,8 @@ ioctls: `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF` and the `2` forms, `TCFLSH`, `F
 `TIOCGPGRP`, `TIOCSPGRP`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGSID`, `TIOCSCTTY`, `TIOCNOTTY`.
 Anything else is `ENOTTY`.
 
-## No sessions
+## Process groups
 
-There are no process groups, so a pgid is a process id. `^C` signals `tty->pgrp`, which
-`TIOCSPGRP` sets (a job-control shell does). While it is 0 nobody gets the signal, and
-`TIOCGPGRP` answers with the asker's own id.
+`^C` and `^\` signal every process of `tty->pgrp`, the group `TIOCSPGRP` named (a job-control
+shell does), through `task_signal_pgrp()`. While it is 0 nobody gets the signal, and
+`TIOCGPGRP` answers with the asker's own group.

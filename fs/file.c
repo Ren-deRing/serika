@@ -383,7 +383,7 @@ long sys_newfstatat(long dirfd, long upath, long ubuf, long flags) {
     int err = path_from_user(dirfd, upath, &path);
     if (err) return err;
 
-    err = vfs_open(path, O_RDONLY, 0, &f);
+    err = vfs_open(path, O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0), 0, &f);
     kfree(path);
     if (err) return err;
 
@@ -765,12 +765,54 @@ long sys_umask(long mask) {
     return old;
 }
 
-/* there are no links: a path that is there is not one */
 long sys_readlinkat(long dirfd, long upath, long ubuf, long size) {
-    (void)ubuf; (void)size;
+    char *path, *target;
+    struct file *f;
 
-    int err = sys_faccessat(dirfd, upath, 0);
-    return err ? err : -EINVAL;
+    if (size <= 0) return -EINVAL;
+
+    int err = path_from_user(dirfd, upath, &path);
+    if (err) return err;
+
+    err = vfs_open(path, O_PATH | O_NOFOLLOW, 0, &f);
+    kfree(path);
+    if (err) return err;
+
+    if (!(target = kmalloc(PATH_MAX))) {
+        vfs_close(f);
+        return -ENOMEM;
+    }
+
+    long len = vfs_readlink(f->inode, target, size < PATH_MAX ? size : PATH_MAX);
+    vfs_close(f);
+
+    if (len > 0 && copy_to_user(ubuf, target, len) != 0) len = -EFAULT;
+
+    kfree(target);
+    return len;
+}
+
+long sys_symlinkat(long utarget, long dirfd, long ulink) {
+    char *target, *link;
+
+    if (!(target = kmalloc(PATH_MAX))) return -ENOMEM;
+
+    long len = strncpy_from_user(target, utarget, PATH_MAX - 1);
+    if (len == 0) len = -ENOENT;
+
+    if (len < 0) {
+        kfree(target);
+        return len;
+    }
+
+    int err = path_from_user(dirfd, ulink, &link);
+    if (!err) {
+        err = vfs_symlink(target, link);
+        kfree(link);
+    }
+
+    kfree(target);
+    return err;
 }
 
 struct iovec {
