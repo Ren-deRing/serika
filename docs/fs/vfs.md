@@ -83,3 +83,20 @@ startup: `AT_PHDR` (for TLS), `AT_PAGESZ`, `AT_RANDOM` (16 bytes, not random yet
 - fs/file.c:      fd tables and the file system calls
 - fs/console.c:   the console
 - user/:          programs packed into the initrd by `make initrd`
+
+## poll
+
+An inode's `poll(inode, fflags, pt)` returns the `POLL*` bits that hold now, and with a `pt` calls
+`poll_wait(pt, wq)` for the queue whose `wake_up()` can change them (at most two). With no
+`poll` op a file is always ready. `poll_core()` registers the task on its own queue (the
+timeout's) and every fd's, which leaves it `TASK_SLEEPING`, looks at every fd, then looks again
+without registering before it calls `schedule()`: what became ready while the first pass was still
+registering is seen by the second, what does after wakes it. `select` and `pselect6` turn
+their sets into pollfds and back, `ppoll` and `pselect6` take a signal mask
+([docs/signal.md](../signal.md)). A poll is never restarted: `-EINTR`.
+
+## Random
+
+`get_random_bytes()` is ChaCha20 with fast key erasure, seeded at boot from `RDSEED` (or `RDRAND`)
+and the tsc. With neither it says so and is not secure. `getrandom()` and `AT_RANDOM` use it,
+and never wait.

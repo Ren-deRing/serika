@@ -469,22 +469,8 @@ static void vma_cut(struct mm *mm, uintptr_t start, uintptr_t end, struct vma **
 /* frames freed per shootdown: one page of their addresses */
 #define UNMAP_BATCH (PAGE_SIZE / sizeof(uintptr_t))
 
-/* mm->lock held. frames are freed only after every cpu dropped them. page tables stay until mm_put() */
-static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
-    uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
-    struct vma *spare = kmalloc(sizeof(struct vma));
-
-    if (!frames_phys || !spare) {
-        free_pages((void *)frames_phys, 0);
-        kfree(spare);
-        return -ENOMEM;
-    }
-
-    uintptr_t *frames = (uintptr_t *)P2V(frames_phys);
-
-    vma_cut(mm, addr, end, &spare);
-
-    /* no vma covers it now: a fault there fails, and mm->lock keeps new ones out */
+/* mm->lock held. the pages of [addr, end) go. frames are freed only after every cpu dropped them. frames: UNMAP_BATCH slots */
+static void drop_pages(struct mm *mm, uintptr_t addr, uintptr_t end, uintptr_t *frames) {
     for (uintptr_t va = addr; va < end; va += UNMAP_BATCH * PAGE_SIZE) {
         size_t n = end - va;
         if (n > UNMAP_BATCH * PAGE_SIZE) n = UNMAP_BATCH * PAGE_SIZE;
@@ -496,6 +482,23 @@ static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
 
         for (size_t i = 0; i < count; i++) frame_put(frames[i]);
     }
+}
+
+/* mm->lock held. page tables stay until mm_put() */
+static int unmap_range(struct mm *mm, uintptr_t addr, uintptr_t end) {
+    uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
+    struct vma *spare = kmalloc(sizeof(struct vma));
+
+    if (!frames_phys || !spare) {
+        free_pages((void *)frames_phys, 0);
+        kfree(spare);
+        return -ENOMEM;
+    }
+
+    vma_cut(mm, addr, end, &spare);
+
+    /* no vma covers it now: a fault there fails, and mm->lock keeps new ones out */
+    drop_pages(mm, addr, end, (uintptr_t *)P2V(frames_phys));
 
     free_pages((void *)frames_phys, 0);
     kfree(spare);
@@ -515,6 +518,41 @@ int mm_unmap(struct mm *mm, uintptr_t addr, size_t size) {
     int err = unmap_range(mm, addr, end);
     mutex_unlock(&mm->lock);
 
+    return err;
+}
+
+/* madvise(MADV_DONTNEED): the vmas stay, their pages go. anonymous memory reads zero after, a file's reads the file */
+int mm_discard(struct mm *mm, uintptr_t addr, size_t size) {
+    if (addr & (PAGE_SIZE - 1)) return -EINVAL;
+
+    size = ALIGN_UP(size, PAGE_SIZE);
+    if (size == 0) return 0;
+
+    uintptr_t end = addr + size;
+    if (end < addr || end > USER_SPACE_END) return -ENOMEM;
+
+    uintptr_t frames_phys = (uintptr_t)alloc_pages(0);
+    if (!frames_phys) return -ENOMEM;
+
+    mutex_lock(&mm->lock);
+
+    int err = 0;
+
+    for (uintptr_t a = addr; a < end;) {
+        struct vma *vma = vma_find(mm, a);
+        if (!vma) {
+            err = -ENOMEM;
+            break;
+        }
+
+        a = vma->end;
+    }
+
+    if (!err) drop_pages(mm, addr, end, (uintptr_t *)P2V(frames_phys));
+
+    mutex_unlock(&mm->lock);
+
+    free_pages((void *)frames_phys, 0);
     return err;
 }
 

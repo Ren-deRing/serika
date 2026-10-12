@@ -81,6 +81,8 @@ struct task {
     bool              on_rq;         /* curr or in the tree. rq lock */
     long              exit_code;     /* wait status, linux encoding */
 
+    uint64_t          saved_blocked; /* ppoll() and pselect(): the mask to go back to */
+    bool              restore_sigmask;
     uint64_t          blocked;       /* signals. only the task changes it, under sighand lock */
     uint64_t          pending;       /* sighand lock, atomic to read */
     struct ksiginfo   siginfo[NSIG]; /* of each pending signal */
@@ -89,6 +91,7 @@ struct task {
 
     struct tgroup    *group;         /* NULL for kthreads */
     list_node         group_node;    /* in group->threads while alive */
+    uintptr_t         robust_list;   /* user's robust_list_head: locks it held are marked on exit */
     uintptr_t         clear_child_tid; /* zeroed and futex-woken on exit: pthread_join waits on it */
 };
 

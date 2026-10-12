@@ -1,5 +1,6 @@
 #include <serika/errno.h>
 #include <serika/mm.h>
+#include <serika/poll.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
 #include <serika/string.h>
@@ -56,6 +57,21 @@ static long tty_write(struct inode *inode, const void *buf, size_t n, uint64_t p
 
     struct tty_struct *tty = inode->priv;
     return tty->ops->write(tty, buf, n);
+}
+
+/* output never waits: the uart is polled */
+static uint32_t tty_poll(struct inode *inode, uint32_t fflags, struct poll_table *pt) {
+    (void)fflags;
+
+    struct tty_struct *tty = inode->priv;
+
+    poll_wait(pt, &tty->read_wait);
+
+    uint64_t flags = spin_lock_irqsave(&tty->lock);
+    uint32_t mask = POLLOUT | (tty->ldisc->readable(tty) ? POLLIN : 0);
+    spin_unlock_irqrestore(&tty->lock, flags);
+
+    return mask;
 }
 
 static void set_termios(struct tty_struct *tty, const struct ktermios *new, bool flush) {
@@ -188,6 +204,7 @@ static const struct inode_ops tty_inode_ops = {
     .read   = tty_read,
     .write  = tty_write,
     .ioctl  = tty_ioctl,
+    .poll   = tty_poll,
     .stream = true,
 };
 

@@ -85,6 +85,7 @@ struct tty_ldisc_ops {
     void (*set_termios)(struct tty_struct *tty, const struct ktermios *old);
     void (*flush_buffer)(struct tty_struct *tty);
     long (*input_pending)(struct tty_struct *tty);
+    bool (*readable)(struct tty_struct *tty); /* would read() not wait */
 };
 
 struct tty_struct {

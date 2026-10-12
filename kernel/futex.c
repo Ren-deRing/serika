@@ -250,6 +250,62 @@ static long futex_requeue(uintptr_t addr, uintptr_t addr2, int nr_wake, int nr_r
     return woke + moved;
 }
 
+#define FUTEX_WAITERS     0x80000000u
+#define FUTEX_OWNER_DIED  0x40000000u
+#define FUTEX_TID_MASK    0x3fffffffu
+
+#define ROBUST_LIMIT 2048 /* a list that loops is user's doing */
+
+struct robust_list_head {
+    uint64_t list;    /* circular, ends at the head itself */
+    int64_t  futex_offset;
+    uint64_t pending; /* being taken or dropped when it died */
+};
+
+long sys_set_robust_list(long head, long len) {
+    if (len != sizeof(struct robust_list_head)) return -EINVAL;
+
+    current_task()->robust_list = head;
+    return 0;
+}
+
+/* a lock the dying task held: owner died, and someone waiting is woken. not atomic: the owner is gone, and a
+ * waiter only sets a bit it keeps */
+static void robust_death(struct mm *mm, uint64_t uaddr, uint32_t tid) {
+    uint32_t uval;
+
+    if (uaddr & 3 || copy_from_user(&uval, uaddr, sizeof(uval)) != 0) return;
+    if ((uval & FUTEX_TID_MASK) != tid) return;
+
+    uint32_t val = (uval & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
+
+    if (copy_to_user(uaddr, &val, sizeof(val)) != 0) return;
+    if (uval & FUTEX_WAITERS) futex_wake(mm, uaddr, 1);
+}
+
+void futex_exit_robust(struct task *task) {
+    struct robust_list_head head;
+    uint32_t tid = task->id;
+
+    if (!task->robust_list || copy_from_user(&head, task->robust_list, sizeof(head)) != 0) return;
+
+    uint64_t entry = head.list;
+
+    for (int n = 0; entry != task->robust_list && n < ROBUST_LIMIT; n++) {
+        uint64_t next;
+
+        if (copy_from_user(&next, entry, sizeof(next)) != 0) break;
+
+        if (entry != head.pending) robust_death(task->mm, entry + head.futex_offset, tid);
+
+        entry = next;
+    }
+
+    if (head.pending) robust_death(task->mm, head.pending + head.futex_offset, tid);
+
+    task->robust_list = 0;
+}
+
 long sys_futex(long uaddr, long op, long val, long utime, long uaddr2, long val3) {
     int cmd = op & FUTEX_CMD_MASK;
     uint64_t deadline = 0, t;

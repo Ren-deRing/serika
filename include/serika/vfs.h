@@ -10,6 +10,7 @@
 #define PATH_MAX 4096
 
 struct inode;
+struct poll_table;
 
 /* called with that inode's lock held, and no other inode's. kernel buffers only */
 struct inode_ops {
@@ -24,6 +25,7 @@ struct inode_ops {
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
 
     /* a stream sleeps in read and write, so they run without the inode lock and take care of their own */
+    uint32_t (*poll)(struct inode *inode, uint32_t fflags, struct poll_table *pt); /* POLL* ready now. no lock held. none: always ready */
     bool stream;
     void (*release)(struct inode *inode, uint32_t flags); /* a file on it is closed, flags are its. no lock held */
 };

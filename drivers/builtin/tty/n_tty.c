@@ -200,10 +200,15 @@ static long n_tty_input_pending(struct tty_struct *tty) {
     return tty->canon_head - tty->read_tail;
 }
 
+static bool n_tty_readable(struct tty_struct *tty) {
+    return L_ICANON(tty) ? readable(tty, 1) : tty->canon_head != tty->read_tail;
+}
+
 const struct tty_ldisc_ops n_tty_ops = {
     .read          = n_tty_read,
     .receive_buf   = n_tty_receive_buf,
     .set_termios   = n_tty_set_termios,
     .flush_buffer  = flush_input,
     .input_pending = n_tty_input_pending,
+    .readable      = n_tty_readable,
 };

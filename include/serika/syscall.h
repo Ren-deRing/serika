@@ -7,6 +7,7 @@
 #define SYS_STAT              4
 #define SYS_FSTAT             5
 #define SYS_LSTAT             6
+#define SYS_POLL              7
 #define SYS_LSEEK             8
 #define SYS_MMAP              9
 #define SYS_MPROTECT         10
@@ -21,10 +22,13 @@
 #define SYS_WRITEV           20
 #define SYS_ACCESS           21
 #define SYS_PIPE             22
+#define SYS_SELECT           23
+#define SYS_MADVISE          28
 #define SYS_DUP              32
 #define SYS_DUP2             33
 #define SYS_NANOSLEEP        35
 #define SYS_GETPID           39
+#define SYS_SENDFILE         40
 #define SYS_CLONE            56
 #define SYS_FORK             57
 #define SYS_VFORK            58
@@ -63,9 +67,15 @@
 #define SYS_NEWFSTATAT      262
 #define SYS_READLINKAT      267
 #define SYS_FACCESSAT       269
+#define SYS_PSELECT6        270
+#define SYS_PPOLL           271
+#define SYS_SET_ROBUST_LIST 273
 #define SYS_DUP3            292
 #define SYS_PIPE2           293
 #define SYS_PRLIMIT64       302
+#define SYS_GETRANDOM       318
+#define SYS_RSEQ            334
+#define SYS_CLONE3          435
 #define SYS_FACCESSAT2      439
 
 #define WNOHANG 1
@@ -89,6 +99,7 @@ long sys_access(long upath, long mode);
 long sys_faccessat(long dirfd, long upath, long mode);
 long sys_readv(long fd, long uiov, long count);
 long sys_writev(long fd, long uiov, long count);
+long sys_sendfile(long out_fd, long in_fd, long uoff, long count);
 long sys_pipe2(long ufds, long flags);
 long sys_dup(long fd);
 long sys_dup2(long oldfd, long newfd);
@@ -101,12 +112,21 @@ long sys_mkdirat(long dirfd, long upath, long mode);
 long sys_umask(long mask);
 long sys_readlinkat(long dirfd, long upath, long ubuf, long size);
 
+/* kernel/random.c */
+long sys_getrandom(long ubuf, long len, long flags);
+
 /* kernel/sys.c */
 long sys_getuid(void);
 long sys_setuid(long id);
 long sys_getpgrp(void);
 long sys_uname(long ubuf);
 long sys_prlimit64(long pid, long resource, long unew, long uold);
+
+/* fs/select.c */
+long sys_poll(long ufds, long nfds, long timeout_ms);
+long sys_ppoll(long ufds, long nfds, long utsp, long usigmask, long sigsetsize);
+long sys_select(long n, long ur, long uw, long ue, long utv);
+long sys_pselect6(long n, long ur, long uw, long ue, long utsp, long usig);
 
 /* kernel/time.c */
 long sys_clock_gettime(long clk, long utp);
@@ -125,6 +145,7 @@ long sys_gettid(void);
 
 /* kernel/fork.c */
 long sys_clone(long flags, long newsp, long ptid, long ctid, long tls);
+long sys_clone3(long uargs, long size);
 long sys_fork(void);
 long sys_vfork(void);
 long sys_wait4(long pid, long ustatus, long options, long urusage);
@@ -137,3 +158,4 @@ long sys_execve(long upath, long uargv, long uenvp);
 
 /* kernel/futex.c */
 long sys_futex(long uaddr, long op, long val, long utime, long uaddr2, long val3);
+long sys_set_robust_list(long head, long len);

@@ -184,6 +184,34 @@ void signal_set_blocked(uint64_t mask) {
     spin_unlock_irqrestore(&curr->sighand->lock, flags);
 }
 
+int sigmask_swap(uintptr_t uset, size_t size) {
+    struct task *curr = current_task();
+    uint64_t mask;
+
+    if (size != sizeof(mask)) return -EINVAL;
+    if (copy_from_user(&mask, uset, sizeof(mask)) != 0) return -EFAULT;
+
+    curr->saved_blocked = curr->blocked;
+    curr->restore_sigmask = true;
+
+    signal_set_blocked(mask);
+    return 0;
+}
+
+void sigmask_restore(void) {
+    struct task *curr = current_task();
+
+    if (!curr->restore_sigmask) return;
+
+    curr->restore_sigmask = false;
+    signal_set_blocked(curr->saved_blocked);
+}
+
+/* -EINTR: a signal may be waiting that only the call's mask lets in. exit_to_user() restores after it */
+void sigmask_unswap(long ret) {
+    if (ret != -EINTR) sigmask_restore();
+}
+
 long sys_rt_sigaction(long sig, long act, long oact, long sigsetsize) {
     struct task *curr = current_task();
     struct sighand *sh = curr->sighand;

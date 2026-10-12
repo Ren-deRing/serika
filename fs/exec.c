@@ -6,6 +6,7 @@
 #include <serika/fcntl.h>
 #include <serika/mm.h>
 #include <serika/page.h>
+#include <serika/random.h>
 #include <serika/signal.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
@@ -113,18 +114,6 @@ static int count_strings(const char *const v[], size_t *count, size_t *bytes) {
     return 0;
 }
 
-/* not random: AT_RANDOM only seeds glibc's canaries until there is a real source */
-static void fill_random(uint8_t *p, size_t n) {
-    uint64_t x = rdtsc() | 1;
-
-    for (size_t i = 0; i < n; i++) {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        p[i] = (uint8_t)x;
-    }
-}
-
 /* buf stands for [sp, ...). copies s at *at, returns where it is for the task */
 static uintptr_t put_string(uint8_t *buf, uintptr_t sp, uintptr_t *at, const char *s) {
     size_t n = strlen(s) + 1;
@@ -174,7 +163,7 @@ static int setup_stack(struct mm *mm, const char *path, const char *const argv[]
     uintptr_t at = top - strings;
 
     uintptr_t random_at = at;
-    fill_random(buf + (at - sp), 16);
+    get_random_bytes(buf + (at - sp), 16);
     at += 16;
 
     uintptr_t platform_at = put_string(buf, sp, &at, platform);

@@ -86,3 +86,12 @@ so growing again faults in zeroed pages, which malloc counts on.
 
 - [docs/sched/locking.md](../sched/locking.md): the rq and wait_queue chain
 - [docs/fs/vfs.md](../fs/vfs.md): the inode mutex, which user copies never hold
+
+## madvise
+
+`MADV_DONTNEED` and `MADV_FREE` call `mm_discard()`: the range must be mapped, the vmas stay,
+and the pages go through the same clear, shootdown and `frame_put()` as `munmap` (`drop_pages()`).
+Anonymous memory reads zero after, a private file mapping reads the file again. Hints that
+change nothing (`NORMAL`, `RANDOM`, `SEQUENTIAL`, `WILLNEED`, `HUGEPAGE`, `NOHUGEPAGE`,
+`DONTDUMP`, `DODUMP`, `MERGEABLE`, `UNMERGEABLE`, `COLD`, `PAGEOUT`) are taken. The ones that
+change what fork or a file does (`DONTFORK`, `WIPEONFORK`, `REMOVE`) are `EINVAL`.

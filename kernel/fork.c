@@ -68,6 +68,46 @@ long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
     return pid;
 }
 
+/* linux's struct clone_args, the part this takes */
+struct clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+};
+
+#define CLONE_ARGS_SIZE_VER0 64
+#define CLONE_PIDFD          0x00001000
+
+/* the same as clone(), with the arguments in a struct and the stack as a base and a size. glibc tries it first */
+long sys_clone3(long uargs, long size) {
+    struct clone_args a = { 0 };
+
+    if (size < CLONE_ARGS_SIZE_VER0 || size > (long)PAGE_SIZE) return -EINVAL;
+
+    /* fields after these are for features not here. a newer program must not have them set */
+    int err = copy_from_user(&a, uargs, sizeof(a));
+    if (err) return err;
+
+    if (size > (long)sizeof(a)) {
+        uint8_t rest;
+
+        for (long off = sizeof(a); off < size; off++) {
+            if (copy_from_user(&rest, uargs + off, 1) != 0) return -EFAULT;
+            if (rest) return -E2BIG;
+        }
+    }
+
+    if ((a.flags & CSIGNAL) || (a.flags & CLONE_PIDFD) || a.exit_signal > CSIGNAL) return -EINVAL;
+    if (!a.stack != !a.stack_size) return -EINVAL;
+
+    return sys_clone(a.flags | a.exit_signal, a.stack ? a.stack + a.stack_size : 0, a.parent_tid, a.child_tid, a.tls);
+}
+
 long sys_fork(void) {
     return sys_clone(SIGCHLD, 0, 0, 0, 0);
 }

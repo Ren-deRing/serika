@@ -2,6 +2,7 @@
 #include <serika/errno.h>
 #include <serika/fcntl.h>
 #include <serika/page.h>
+#include <serika/poll.h>
 #include <serika/preempt.h>
 #include <serika/sched.h>
 #include <serika/signal.h>
@@ -126,6 +127,27 @@ static long pipe_write(struct inode *inode, const void *buf, size_t n, uint64_t 
     return done;
 }
 
+static uint32_t pipe_poll(struct inode *inode, uint32_t fflags, struct poll_table *pt) {
+    struct pipe *p = pipe_of(inode);
+    uint32_t mask = 0;
+
+    bool writer = (fflags & O_ACCMODE) == O_WRONLY;
+    poll_wait(pt, writer ? &p->writable : &p->readable);
+
+    uint64_t flags = spin_lock_irqsave(&p->lock);
+
+    if (writer) {
+        if (!p->readers)                           mask |= POLLERR;
+        else if (PIPE_SIZE - p->count >= PIPE_BUF) mask |= POLLOUT;
+    } else {
+        if (p->count)    mask |= POLLIN;
+        if (!p->writers) mask |= POLLHUP;
+    }
+
+    spin_unlock_irqrestore(&p->lock, flags);
+    return mask;
+}
+
 /* the last reader or writer going wakes the other side: the end, or EPIPE */
 static void pipe_release(struct inode *inode, uint32_t fflags) {
     struct pipe *p = pipe_of(inode);
@@ -152,6 +174,7 @@ static const struct inode_ops pipe_ops = {
     .read    = pipe_read,
     .write   = pipe_write,
     .evict   = pipe_evict,
+    .poll    = pipe_poll,
     .stream  = true,
     .release = pipe_release,
 };

@@ -52,3 +52,12 @@ bool test_exec_busybox() {
     TEST_ASSERT(WEXITSTATUS(status) == 0); /* the script's number of the check that failed */
     return true;
 }
+
+/* getrandom, madvise, poll, select, sendfile and a robust mutex, through glibc */
+bool test_exec_syscalls() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/syscalls", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

@@ -53,3 +53,11 @@ The frame is the user's: anything in it may be hostile. Before anything is resto
 
 It returns through `iretq`: `sysret` would lose `rcx` and `r11`. A bad frame kills the task
 with `SIGSEGV`.
+
+## ppoll and pselect
+
+`sigmask_swap()` gives a call its own mask and remembers the old one in the task
+(`saved_blocked`, `restore_sigmask`). It is put back when the call returns anything but
+`-EINTR`. After `-EINTR` it waits for `exit_to_user()`: a signal that only the call's mask let in
+is dequeued with that mask, and the old one is back before its frame is written, so the frame
+and `rt_sigreturn` keep the program's mask. With no signal to deliver, it is restored there too.

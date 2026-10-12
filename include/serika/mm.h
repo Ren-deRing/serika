@@ -65,6 +65,7 @@ int mm_write(struct mm *mm, uintptr_t addr, const void *src, size_t size);
 struct mm *mm_fork(struct mm *old);
 int mm_protect(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot);
 int mm_unmap(struct mm *mm, uintptr_t addr, size_t size);
+int mm_discard(struct mm *mm, uintptr_t addr, size_t size);
 long mm_mmap(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot, uint32_t flags, struct file *file, uint64_t off);
 uintptr_t mm_take_area(struct mm *mm, size_t size);
 void mm_set_brk(struct mm *mm, uintptr_t start);

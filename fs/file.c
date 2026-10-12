@@ -811,3 +811,69 @@ long sys_readv(long fd, long uiov, long count) {
 long sys_writev(long fd, long uiov, long count) {
     return iov_rw(fd, uiov, count, sys_write);
 }
+
+/* in at its offset (or its own position), straight into out. in must be a file with a position */
+long sys_sendfile(long out_fd, long in_fd, long uoff, long count) {
+    struct file *in, *out;
+    uint64_t off = 0;
+    long done = 0;
+
+    if (count < 0) return -EINVAL;
+    if (out_fd == in_fd) return -EINVAL;
+
+    if (!(in = fd_get(in_fd))) return -EBADF;
+    if (!(out = fd_get(out_fd))) {
+        vfs_close(in);
+        return -EBADF;
+    }
+
+    long ret = 0;
+    uintptr_t bounce = 0;
+
+    if (is_stream(in->inode) || (in->flags & O_ACCMODE) == O_WRONLY) ret = -EINVAL;
+    else if (uoff && copy_from_user(&off, uoff, sizeof(off)) != 0) ret = -EFAULT;
+    else if (!(bounce = (uintptr_t)alloc_pages(0))) ret = -ENOMEM;
+
+    if (ret) goto out;
+
+    bool in_lock = !uoff, out_lock = !is_stream(out->inode);
+
+    if (in_lock)  mutex_lock(&in->pos_lock);
+    if (out_lock) mutex_lock(&out->pos_lock);
+
+    uint64_t *pos = uoff ? &off : &in->pos;
+
+    while (done < count) {
+        size_t n = count - done;
+        if (n > PAGE_SIZE) n = PAGE_SIZE;
+
+        long r = kernel_read(in, (void *)P2V(bounce), n, pos);
+        if (r <= 0) {
+            if (!done) done = r;
+            break;
+        }
+
+        long w = kernel_write(out, (void *)P2V(bounce), r, &out->pos);
+        if (w < r) {
+            *pos -= r - (w > 0 ? w : 0); /* what was read and not written is read again */
+            if (w > 0) done += w;
+            else if (!done) done = w;
+            break;
+        }
+
+        done += w;
+    }
+
+    if (out_lock) mutex_unlock(&out->pos_lock);
+    if (in_lock)  mutex_unlock(&in->pos_lock);
+
+    free_pages((void *)bounce, 0);
+    ret = done;
+
+    if (uoff && done > 0 && copy_to_user(uoff, &off, sizeof(off)) != 0) ret = -EFAULT;
+
+out:
+    vfs_close(in);
+    vfs_close(out);
+    return ret;
+}

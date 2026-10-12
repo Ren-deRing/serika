@@ -97,6 +97,11 @@ int  signal_dequeue(struct ksiginfo *info, struct k_sigaction *ka);
 void signal_delivered(int sig, const struct k_sigaction *ka);
 void signal_set_blocked(uint64_t mask);
 
+/* the mask of ppoll(): the call's own, back when it returns or, if a signal ended it, once that signal has its frame */
+int  sigmask_swap(uintptr_t uset, size_t size);
+void sigmask_unswap(long ret);
+void sigmask_restore(void);
+
 /* arch: the frame on the user stack, and back */
 struct trapframe;
 

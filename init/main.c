@@ -8,6 +8,7 @@
 #include <serika/panic.h>
 #include <serika/pmap.h>
 #include <serika/printk.h>
+#include <serika/random.h>
 #include <serika/serial.h>
 #include <serika/buddy.h>
 #include <serika/slab.h>
@@ -31,6 +32,7 @@ notrace void start_init(void) {
     printk("Hello serika\n");
 
     cpu_init();
+    random_init();
     buddy_init();
     slab_init();
     pmap_init();

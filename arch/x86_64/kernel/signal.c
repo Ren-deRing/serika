@@ -246,10 +246,15 @@ void exit_to_user(struct trapframe *tf, bool syscall) {
             }
         }
 
-        if (!sig) return;
+        if (!sig) {
+            sigmask_restore();
+            return;
+        }
 
         /* the frame is written through the mm, whose lock sleeps. a signal that comes now is seen on the next pass */
         arch_irq_enable();
+
+        sigmask_restore(); /* the frame keeps the mask the program had */
 
         if (ka.handler == SIG_DFL) signal_kill(sig, &info, tf);
 

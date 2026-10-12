@@ -38,6 +38,35 @@ static long sys_mmap(long addr, long len, long prot, long flags, long fd, long o
 }
 
 
+#define MADV_DONTNEED 4
+#define MADV_FREE     8
+
+/* DONTNEED and FREE drop the pages, and the memory reads zero after. what only advises is taken and changes
+ * nothing. what changes what fork or a file does is refused: DONTFORK, WIPEONFORK, REMOVE */
+static long sys_madvise(long addr, long len, long advice) {
+    switch (advice) {
+        case MADV_DONTNEED:
+        case MADV_FREE:
+            return mm_discard(current_task()->mm, addr, len);
+
+        case 0:  /* NORMAL */
+        case 1:  /* RANDOM */
+        case 2:  /* SEQUENTIAL */
+        case 3:  /* WILLNEED */
+        case 12: /* MERGEABLE */
+        case 13: /* UNMERGEABLE */
+        case 14: /* HUGEPAGE */
+        case 15: /* NOHUGEPAGE */
+        case 16: /* DONTDUMP */
+        case 17: /* DODUMP */
+        case 20: /* COLD */
+        case 21: /* PAGEOUT */
+            return 0;
+    }
+
+    return -EINVAL;
+}
+
 static long sys_munmap(long addr, long len) {
     return mm_unmap(current_task()->mm, addr, len);
 }
@@ -74,6 +103,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_MMAP:            return sys_mmap(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_MPROTECT:        return sys_mprotect(args[0], args[1], args[2]);
         case SYS_MUNMAP:          return sys_munmap(args[0], args[1]);
+        case SYS_MADVISE:         return sys_madvise(args[0], args[1], args[2]);
         case SYS_BRK:             return sys_brk(args[0]);
         case SYS_RT_SIGACTION:    return sys_rt_sigaction(args[0], args[1], args[2], args[3]);
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
@@ -81,11 +111,14 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_PREAD64:         return sys_pread64(args[0], args[1], args[2], args[3]);
         case SYS_READV:           return sys_readv(args[0], args[1], args[2]);
         case SYS_WRITEV:          return sys_writev(args[0], args[1], args[2]);
+        case SYS_POLL:            return sys_poll(args[0], args[1], args[2]);
+        case SYS_SELECT:          return sys_select(args[0], args[1], args[2], args[3], args[4]);
         case SYS_ACCESS:          return sys_access(args[0], args[1]);
         case SYS_PIPE:            return sys_pipe2(args[0], 0);
         case SYS_DUP:             return sys_dup(args[0]);
         case SYS_DUP2:            return sys_dup2(args[0], args[1]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
+        case SYS_SENDFILE:        return sys_sendfile(args[0], args[1], args[2], args[3]);
         case SYS_GETPID:          return sys_getpid();
         case SYS_CLONE:           return sys_clone(args[0], args[1], args[2], args[3], args[4]);
         case SYS_FORK:            return sys_fork();
@@ -115,6 +148,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_TKILL:           return sys_tkill(args[0], args[1]);
         case SYS_FUTEX:           return sys_futex(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_GETDENTS64:      return sys_getdents64(args[0], args[1], args[2]);
+        case SYS_SET_ROBUST_LIST: return sys_set_robust_list(args[0], args[1]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
         case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
@@ -126,7 +160,12 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_READLINKAT:      return sys_readlinkat(args[0], args[1], args[2], args[3]);
         case SYS_DUP3:            return sys_dup3(args[0], args[1], args[2]);
         case SYS_PIPE2:           return sys_pipe2(args[0], args[1]);
+        case SYS_GETRANDOM:       return sys_getrandom(args[0], args[1], args[2]);
+        case SYS_CLONE3:          return sys_clone3(args[0], args[1]);
+        case SYS_RSEQ:            return -ENOSYS; /* its users run without: glibc does */
         case SYS_PRLIMIT64:       return sys_prlimit64(args[0], args[1], args[2], args[3]);
+        case SYS_PSELECT6:        return sys_pselect6(args[0], args[1], args[2], args[3], args[4], args[5]);
+        case SYS_PPOLL:           return sys_ppoll(args[0], args[1], args[2], args[3], args[4]);
         case SYS_FACCESSAT:       return sys_faccessat(args[0], args[1], args[2]);
         case SYS_FACCESSAT2:      return sys_faccessat(args[0], args[1], args[2]); /* flags: no users to tell apart */
     }

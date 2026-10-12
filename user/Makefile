@@ -14,7 +14,7 @@ EXEC := $(BINS:%=$(INITRD_DIR)/bin/%) $(BINS:%=$(INITRD_DIR)/bin/%-pie)
 
 # against the host's shared glibc: ld.so and the libraries go in /lib64
 GLIBC_CC   := clang
-GLIBC_BINS := hello files signals fork threads
+GLIBC_BINS := hello files signals fork threads syscalls
 GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libgcc_s.so.1
 EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 

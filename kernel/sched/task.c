@@ -555,6 +555,8 @@ static void exit_mm(struct task *curr) {
 void task_exit(long code) {
     struct task *curr = current_task();
 
+    futex_exit_robust(curr);
+
     /* pthread_join() sleeps on this word */
     if (curr->clear_child_tid) {
         uint32_t zero = 0;

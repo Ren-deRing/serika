@@ -34,3 +34,12 @@ in `task_exit()`, before the mm is dropped: that is what `pthread_join()` sleeps
 One sorted list under `timer_lock`, run from cpu 0's tick (1 ms). A timer's function runs with
 the lock held and must not sleep. `sleep_until()` (`nanosleep`) sleeps on a wait queue the timer
 wakes, instead of yielding until the deadline.
+
+## Robust lists
+
+`set_robust_list()` stores the address of the user's `robust_list_head`. When a thread exits,
+`futex_exit_robust()` walks the list (at most 2048 entries, and the entry being taken or dropped
+when it died), and for each lock the thread owned sets `FUTEX_OWNER_DIED`, keeping the waiters
+bit, and wakes one waiter. It runs before `clear_child_tid`, on the exiting thread's own mm. The
+word is changed with plain user copies, not an atomic: the owner is gone, and a waiter only sets
+a bit that is kept.
