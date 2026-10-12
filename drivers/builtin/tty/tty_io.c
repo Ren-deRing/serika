@@ -1,4 +1,5 @@
 #include <serika/errno.h>
+#include <serika/fcntl.h>
 #include <serika/mm.h>
 #include <serika/poll.h>
 #include <serika/slab.h>
@@ -45,17 +46,13 @@ void tty_flip_buffer_push(struct tty_struct *tty) {
 }
 
 /* a stream: read sleeps, so the inode lock is not held */
-static long tty_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
-    (void)pos;
-
-    struct tty_struct *tty = inode->priv;
-    return tty->ldisc->read(tty, buf, n);
+static long tty_read(struct file *f, void *buf, size_t n) {
+    struct tty_struct *tty = f->inode->priv;
+    return tty->ldisc->read(tty, buf, n, f->flags & O_NONBLOCK);
 }
 
-static long tty_write(struct inode *inode, const void *buf, size_t n, uint64_t pos) {
-    (void)pos;
-
-    struct tty_struct *tty = inode->priv;
+static long tty_write(struct file *f, const void *buf, size_t n) {
+    struct tty_struct *tty = f->inode->priv;
     return tty->ops->write(tty, buf, n);
 }
 
@@ -201,11 +198,11 @@ static long tty_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg)
 }
 
 static const struct inode_ops tty_inode_ops = {
-    .read   = tty_read,
-    .write  = tty_write,
-    .ioctl  = tty_ioctl,
-    .poll   = tty_poll,
-    .stream = true,
+    .stream_read  = tty_read,
+    .stream_write = tty_write,
+    .ioctl        = tty_ioctl,
+    .poll         = tty_poll,
+    .stream       = true,
 };
 
 /* cooked, echo, 38400 8n1 */

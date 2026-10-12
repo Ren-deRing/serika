@@ -51,6 +51,11 @@ rmdir /tmp/d 2> /dev/null && fail 29
 rm -r /tmp/d || fail 30
 [ ! -e /tmp/d ] || fail 31
 
+# a script run by its name: "#!" names the interpreter, the script's name and arguments follow
+printf '#!/bin/sh\necho "script: $0 $1 $2"\n' > /tmp/s.sh
+chmod 755 /tmp/s.sh
+[ "$(/tmp/s.sh a b)" = "script: /tmp/s.sh a b" ] || fail 36
+
 # /dev
 echo gone > /dev/null || fail 32
 [ "$(head -c 4 /dev/zero | wc -c)" = 4 ] || fail 33

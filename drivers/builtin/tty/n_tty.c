@@ -154,7 +154,7 @@ static bool readable(struct tty_struct *tty, size_t n) {
     return avail >= (min < n ? min : n);
 }
 
-static long n_tty_read(struct tty_struct *tty, char *buf, size_t n) {
+static long n_tty_read(struct tty_struct *tty, char *buf, size_t n, bool nonblock) {
     if (!n) return 0;
 
     uint64_t flags = spin_lock_irqsave(&tty->lock);
@@ -162,6 +162,8 @@ static long n_tty_read(struct tty_struct *tty, char *buf, size_t n) {
     /* VMIN 0: whatever is there, which may be nothing */
     while (!readable(tty, n) && !(!L_ICANON(tty) && tty->termios.c_cc[VMIN] == 0)) {
         spin_unlock_irqrestore(&tty->lock, flags);
+
+        if (nonblock) return -EAGAIN;
 
         int err = wait_event_interruptible(tty->read_wait, readable(tty, n));
         if (err) return err;

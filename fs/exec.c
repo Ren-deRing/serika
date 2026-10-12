@@ -22,6 +22,8 @@
 #define EXEC_MAX_PHNUM  64
 #define EXEC_ARGS_MAX   (USER_STACK_SIZE / 4)  /* strings, vectors and auxv */
 #define EXEC_NR_AUXV    19                     /* AT_NULL included */
+#define EXEC_LINE_MAX   256                    /* the "#!" line, linux's too */
+#define EXEC_SCRIPT_DEPTH 4                    /* a script whose interpreter is a script */
 
 static int read_exact(struct file *f, void *buf, size_t n, uint64_t pos) {
     uint8_t *to = buf;
@@ -133,12 +135,12 @@ struct exec_image {
 };
 
 /* sysv: argc, argv, NULL, envp, NULL, auxv at sp (16 aligned), strings above */
-static int setup_stack(struct mm *mm, const char *path, const char *const argv[], const char *const envp[],
+static int setup_stack(struct mm *mm, const char *name, const char *const argv[], const char *const envp[],
                        const struct exec_image *img, uintptr_t *sp_out) {
     static const char platform[] = "x86_64";
 
     size_t argc, envc;
-    size_t strings = sizeof(platform) + 16 + strnlen(path, PATH_MAX) + 1;
+    size_t strings = sizeof(platform) + 16 + strnlen(name, PATH_MAX) + 1;
 
     int err;
     if ((err = count_strings(argv, &argc, &strings)) != 0) return err;
@@ -167,7 +169,7 @@ static int setup_stack(struct mm *mm, const char *path, const char *const argv[]
     at += 16;
 
     uintptr_t platform_at = put_string(buf, sp, &at, platform);
-    uintptr_t execfn_at   = put_string(buf, sp, &at, path);
+    uintptr_t execfn_at   = put_string(buf, sp, &at, name);
 
     uintptr_t *v = (uintptr_t *)buf;
 
@@ -303,9 +305,69 @@ out:
     return err;
 }
 
+static int load(const char *path, const char *name, const char *const argv[], const char *const envp[],
+                struct mm **out, uintptr_t *entry, uintptr_t *sp_out, int depth);
+
+/* "#! interpreter [arg]" in line, n bytes: the interpreter is run with its arg, the script's name and the script's
+ * own arguments after that. only one arg, the whole rest of the line, as linux does */
+static int exec_script(char *line, size_t n, const char *name, const char *const argv[], const char *const envp[],
+                       struct mm **out, uintptr_t *entry, uintptr_t *sp_out, int depth) {
+    if (depth >= EXEC_SCRIPT_DEPTH) return -ELOOP;
+
+    char *end = line;
+    while (end < line + n && *end != '\n') end++;
+
+    if (end == line + n && n == EXEC_LINE_MAX) return -ENOEXEC; /* a line that does not end */
+
+    *end = '\0';
+
+    char *interp = line + 2;
+    while (*interp == ' ' || *interp == '\t') interp++;
+    if (!*interp) return -ENOEXEC;
+
+    char *arg = interp;
+    while (*arg && *arg != ' ' && *arg != '\t') arg++;
+
+    if (*arg) {
+        *arg++ = '\0';
+        while (*arg == ' ' || *arg == '\t') arg++;
+    }
+
+    char *tail = arg + strlen(arg);
+    while (tail > arg && (tail[-1] == ' ' || tail[-1] == '\t')) *--tail = '\0';
+
+    size_t argc = 0;
+    while (argv && argv[argc]) argc++;
+
+    size_t bytes = (argc + 4) * sizeof(char *);
+    int order = SIZE_TO_ORDER(bytes);
+
+    uintptr_t phys = (uintptr_t)alloc_pages(order);
+    if (!phys) return -ENOMEM;
+
+    const char **vec = (const char **)P2V(phys);
+    size_t k = 0;
+
+    vec[k++] = interp;
+    if (*arg) vec[k++] = arg;
+    vec[k++] = name;
+    for (size_t i = 1; i < argc; i++) vec[k++] = argv[i];
+    vec[k] = NULL;
+
+    int err = load(interp, interp, vec, envp, out, entry, sp_out, depth + 1);
+
+    free_pages((void *)phys, order);
+    return err;
+}
+
 /* a new address space with path loaded and its stack built: where to start, and with what rsp */
-int exec_load(const char *path, const char *const argv[], const char *const envp[],
+int exec_load(const char *path, const char *name, const char *const argv[], const char *const envp[],
               struct mm **out, uintptr_t *entry, uintptr_t *sp_out) {
+    return load(path, name, argv, envp, out, entry, sp_out, 0);
+}
+
+static int load(const char *path, const char *name, const char *const argv[], const char *const envp[],
+                struct mm **out, uintptr_t *entry, uintptr_t *sp_out, int depth) {
     struct file *f;
 
     int err = vfs_open(path, O_RDONLY, 0, &f);
@@ -319,6 +381,16 @@ int exec_load(const char *path, const char *const argv[], const char *const envp
 
     if (!S_ISREG(f->inode->mode)) {
         err = -EACCES;
+        goto out;
+    }
+
+    /* a script names its interpreter on the first line */
+    char line[EXEC_LINE_MAX];
+    uint64_t pos = 0;
+    long got = kernel_read(f, line, sizeof(line), &pos);
+
+    if (got >= 2 && line[0] == '#' && line[1] == '!') {
+        err = exec_script(line, got, name, argv, envp, out, entry, sp_out, depth);
         goto out;
     }
 
@@ -372,7 +444,7 @@ int exec_load(const char *path, const char *const argv[], const char *const envp
 
     if (interp && (err = load_interp(mm, interp, (void *)P2V(bounce), &img.base, &start)) != 0) goto out;
 
-    if ((err = setup_stack(mm, path, argv, envp, &img, sp_out)) != 0) goto out;
+    if ((err = setup_stack(mm, name, argv, envp, &img, sp_out)) != 0) goto out;
 
     *out = mm;
     *entry = start;
@@ -393,7 +465,7 @@ int task_create_exec(const char *path, const char *const argv[], const char *con
     struct mm *mm;
     uintptr_t entry, sp;
 
-    int err = exec_load(path, argv, envp, &mm, &entry, &sp);
+    int err = exec_load(path, path, argv, envp, &mm, &entry, &sp);
     if (err) return err;
 
     struct files *files = files_create();
@@ -450,14 +522,22 @@ long sys_execve(long upath, long uargv, long uenvp) {
     if (__atomic_load_n(&curr->group->live, 2) != 1 || __atomic_load_n(&curr->sighand->users, 2) != 1) /* __ATOMIC_ACQUIRE */
         return -EBUSY;
 
-    char *path;
-    int err = path_from_user(AT_FDCWD, upath, &path);
-    if (err) return err;
+    char *path, *name = kmalloc(PATH_MAX);
+    if (!name) return -ENOMEM;
+
+    /* the name as it was given, for a script and AT_EXECFN */
+    long len = strncpy_from_user(name, upath, PATH_MAX - 1);
+    int err = len < 0 ? len : len == 0 ? -ENOENT : path_from_user(AT_FDCWD, upath, &path);
+    if (err) {
+        kfree(name);
+        return err;
+    }
 
     int order = SIZE_TO_ORDER(EXEC_ARGS_MAX);
     uintptr_t area = (uintptr_t)alloc_pages(order);
     if (!area) {
         kfree(path);
+        kfree(name);
         return -ENOMEM;
     }
 
@@ -469,10 +549,11 @@ long sys_execve(long upath, long uargv, long uenvp) {
 
     if ((err = copy_strings(uargv, (char *)P2V(area), &used, &argv)) == 0 &&
         (err = copy_strings(uenvp, (char *)P2V(area), &used, &envp)) == 0)
-        err = exec_load(path, argv, envp, &mm, &entry, &sp);
+        err = exec_load(path, name, argv, envp, &mm, &entry, &sp);
 
     free_pages((void *)area, order);
     kfree(path);
+    kfree(name);
 
     if (err) return err;
 

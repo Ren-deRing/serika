@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <sched.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -46,6 +47,23 @@ int main(void) {
     m[0] = 1;
     if (madvise(m, 8192, MADV_HUGEPAGE) != 0 || m[0] != 1) return 6;
     if (madvise(m + 1, 10, MADV_DONTNEED) == 0 || errno != EINVAL) return 7;
+
+    /* mremap: growing, moving if it has to, keeps the data. shrinking gives the tail back */
+    char *r = mmap(NULL, 4 * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (r == MAP_FAILED) return 38;
+
+    for (int i = 0; i < 4; i++) r[i * 4096] = i + 1;
+
+    char *big = mremap(r, 4 * 4096, 64 * 4096, MREMAP_MAYMOVE);
+    if (big == MAP_FAILED) return 39;
+
+    for (int i = 0; i < 4; i++)
+        if (big[i * 4096] != i + 1) return 40;
+
+    if (big[40 * 4096] != 0) return 41;
+    big[63 * 4096] = 7;
+
+    if (mremap(big, 64 * 4096, 2 * 4096, 0) != big || big[4096] != 2) return 42;
 
     /* poll on a pipe: nothing, data, a writer's room, the end */
     int p[2];
@@ -159,6 +177,50 @@ int main(void) {
     if (pid == 0) _exit(setsid() == getpid() && getsid(0) == getpid() ? 0 : 1);
 
     if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 37;
+
+    /* O_NONBLOCK: a pipe with nothing in it says so instead of waiting, and the flag can be set and cleared */
+    int nb[2];
+    if (pipe2(nb, O_NONBLOCK) != 0) return 43;
+    if (read(nb[0], &c, 1) != -1 || errno != EAGAIN) return 44;
+    if (!(fcntl(nb[0], F_GETFL) & O_NONBLOCK)) return 45;
+    if (fcntl(nb[0], F_SETFL, 0) != 0 || (fcntl(nb[0], F_GETFL) & O_NONBLOCK)) return 46;
+    close(nb[0]);
+    close(nb[1]);
+
+    /* a named pipe: both ends open without waiting, and the data comes through */
+    unlink("/tmp/syscalls.fifo");
+    if (mkfifo("/tmp/syscalls.fifo", 0600) != 0) return 47;
+
+    struct stat fst;
+    if (stat("/tmp/syscalls.fifo", &fst) != 0 || !S_ISFIFO(fst.st_mode)) return 48;
+
+    int fr = open("/tmp/syscalls.fifo", O_RDONLY | O_NONBLOCK);
+    int fw = open("/tmp/syscalls.fifo", O_WRONLY | O_NONBLOCK);
+    if (fr < 0 || fw < 0) return 49;
+    if (write(fw, "ok", 2) != 2 || read(fr, got, 2) != 2 || memcmp(got, "ok", 2)) return 50;
+    close(fr);
+    close(fw);
+
+    /* and with nobody on the other side yet, a blocking open waits for it */
+    pid = fork();
+    if (pid < 0) return 51;
+
+    if (pid == 0) {
+        int w = open("/tmp/syscalls.fifo", O_WRONLY); /* waits for the reader below */
+        _exit(w >= 0 && write(w, "hi", 2) == 2 ? 0 : 1);
+    }
+
+    fr = open("/tmp/syscalls.fifo", O_RDONLY); /* and this for the writer */
+    if (fr < 0 || read(fr, got, 2) != 2 || memcmp(got, "hi", 2)) return 52;
+    close(fr);
+
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 53;
+    unlink("/tmp/syscalls.fifo");
+
+    /* the cpus there are */
+    cpu_set_t cpus;
+    if (sched_getaffinity(0, sizeof(cpus), &cpus) != 0 || CPU_COUNT(&cpus) < 1) return 54;
+    if (sched_setaffinity(0, sizeof(cpus), &cpus) != 0) return 55;
 
     /* a thread that ends holding a robust mutex leaves it owner-died */
     pthread_mutexattr_t at;

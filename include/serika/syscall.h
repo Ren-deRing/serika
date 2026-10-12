@@ -23,6 +23,7 @@
 #define SYS_ACCESS           21
 #define SYS_PIPE             22
 #define SYS_SELECT           23
+#define SYS_MREMAP           25
 #define SYS_MADVISE          28
 #define SYS_DUP              32
 #define SYS_DUP2             33
@@ -75,12 +76,15 @@
 #define SYS_GETSID          124
 #define SYS_RT_SIGPENDING   127
 #define SYS_RT_SIGSUSPEND   130
+#define SYS_MKNOD           133
 #define SYS_ARCH_PRCTL      158
 #define SYS_SYNC            162
 #define SYS_GETTID          186
 #define SYS_TKILL           200
 #define SYS_TIME            201
 #define SYS_FUTEX           202
+#define SYS_SCHED_SETAFFINITY 203
+#define SYS_SCHED_GETAFFINITY 204
 #define SYS_GETDENTS64      217
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_CLOCK_GETTIME   228
@@ -89,6 +93,7 @@
 #define SYS_TGKILL          234
 #define SYS_OPENAT          257
 #define SYS_MKDIRAT         258
+#define SYS_MKNODAT         259
 #define SYS_FCHOWNAT        260
 #define SYS_NEWFSTATAT      262
 #define SYS_UNLINKAT        263
@@ -143,6 +148,7 @@ long sys_getcwd(long ubuf, long size);
 long sys_chdir(long upath);
 long sys_mkdirat(long dirfd, long upath, long mode);
 long sys_umask(long mask);
+long sys_mknodat(long dirfd, long upath, long mode, long dev);
 long sys_readlinkat(long dirfd, long upath, long ubuf, long size);
 long sys_symlinkat(long utarget, long dirfd, long ulink);
 long sys_unlinkat(long dirfd, long upath, long flags);
@@ -165,6 +171,8 @@ long sys_setuid(long id);
 long sys_uname(long ubuf);
 long sys_prlimit64(long pid, long resource, long unew, long uold);
 long sys_sysinfo(long ubuf);
+long sys_sched_getaffinity(long pid, long size, long umask);
+long sys_sched_setaffinity(long pid, long size, long umask);
 long sys_getrusage(long who, long ubuf);
 
 /* fs/select.c */

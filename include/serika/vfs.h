@@ -10,6 +10,7 @@
 #define PATH_MAX 4096
 
 struct inode;
+struct file;
 struct poll_table;
 
 /* called with that inode's lock held, and no other inode's. kernel buffers only */
@@ -28,9 +29,15 @@ struct inode_ops {
     long (*getdents)(struct inode *dir, void *buf, size_t n, uint64_t *pos); /* linux_dirent64s, pos is the entry */
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
 
-    /* a stream sleeps in read and write, so they run without the inode lock and take care of their own */
     uint32_t (*poll)(struct inode *inode, uint32_t fflags, struct poll_table *pt); /* POLL* ready now. no lock held. none: always ready */
+
+    /* a stream (a pipe, a tty) sleeps in its reads and writes, so those run without the inode lock and take the
+     * file, which says whether to wait (O_NONBLOCK). its read and write ops are not used */
     bool stream;
+    long (*stream_read)(struct file *f, void *buf, size_t n);
+    long (*stream_write)(struct file *f, const void *buf, size_t n);
+
+    int  (*open)(struct inode *inode, uint32_t flags);    /* a file is being opened: may sleep, no lock held. not for O_PATH */
     void (*release)(struct inode *inode, uint32_t flags); /* a file on it is closed, flags are its. no lock held */
 };
 
@@ -91,6 +98,7 @@ void fget(struct file *f);
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
 int  vfs_symlink(const char *target, const char *path);
+int  vfs_mkfifo(const char *path, uint32_t mode);
 int  vfs_unlink(const char *path);
 int  vfs_rmdir(const char *path);
 int  vfs_rename(const char *oldpath, const char *newpath);
@@ -118,7 +126,8 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 struct inode *ramfs_root(void);
 struct inode *console_create(void);
 void mem_devices_create(void);
-int pipe_create(struct file *out[2]); /* read end, write end */
+int pipe_create(struct file *out[2], uint32_t flags); /* read end, write end. flags: O_NONBLOCK */
+struct inode *fifo_create(uint32_t mode);              /* a named pipe: link it somewhere */
 void initramfs_unpack(void);
 
 struct files *files_create(void); /* 0, 1 and 2 on the console */

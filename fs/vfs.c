@@ -291,10 +291,19 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
         mutex_unlock(&inode->lock);
     }
 
+    /* a fifo waits here for the other end. an O_PATH file is not an open one */
+    bool opened = false;
+
+    if (!err && !(flags & O_PATH) && inode->ops->open) {
+        err = inode->ops->open(inode, flags);
+        opened = !err;
+    }
+
     struct file *f = NULL;
     if (!err && !(f = file_alloc(inode, flags))) err = -ENOMEM;
 
     if (err) {
+        if (opened && inode->ops->release) inode->ops->release(inode, flags);
         if (inode) iput(inode);
         return err;
     }
@@ -324,7 +333,7 @@ void fget(struct file *f) {
 void vfs_close(struct file *f) {
     if (__atomic_sub_fetch(&f->refs, 1, 4) != 0) return; /* __ATOMIC_ACQ_REL */
 
-    if (f->inode->ops->release) f->inode->ops->release(f->inode, f->flags);
+    if (f->inode->ops->release && !(f->flags & O_PATH)) f->inode->ops->release(f->inode, f->flags);
 
     iput(f->inode);
     kfree(f);
@@ -596,6 +605,16 @@ out:
     return err;
 }
 
+int vfs_mkfifo(const char *path, uint32_t mode) {
+    struct inode *inode = fifo_create(mode);
+    if (!inode) return -ENOMEM;
+
+    int err = vfs_link_inode(path, inode);
+
+    iput(inode); /* the name has its own */
+    return err;
+}
+
 /* newpath becomes another name for what oldpath is. not for a dir */
 int vfs_link(const char *oldpath, const char *newpath) {
     struct file *f;
@@ -650,9 +669,9 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
 
     if ((f->flags & O_ACCMODE) == O_WRONLY || (f->flags & O_PATH)) return -EBADF;
     if (S_ISDIR(inode->mode)) return -EISDIR;
-    if (!inode->ops->read) return -EINVAL;
+    if (inode->ops->stream) return inode->ops->stream_read(f, buf, n);
 
-    if (inode->ops->stream) return inode->ops->read(inode, buf, n, *pos);
+    if (!inode->ops->read) return -EINVAL;
 
     mutex_lock(&inode->lock);
     long r = inode->ops->read(inode, buf, n, *pos);
@@ -666,9 +685,9 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
     struct inode *inode = f->inode;
 
     if ((f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH)) return -EBADF;
-    if (!inode->ops->write) return -EINVAL;
+    if (inode->ops->stream) return inode->ops->stream_write(f, buf, n);
 
-    if (inode->ops->stream) return inode->ops->write(inode, buf, n, *pos);
+    if (!inode->ops->write) return -EINVAL;
 
     mutex_lock(&inode->lock);
 

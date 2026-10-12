@@ -87,12 +87,18 @@ UTC; there is no timezone, no leap seconds, and nothing keeps it in step with th
 
 ## Pipes
 
-A pipe is an inode with `stream` set in its ops: `read` and `write` run without the inode
-mutex, because they sleep, and `pipe` has its own spinlock for the ring (64 KiB). The lock
+A pipe is an inode with `stream` set in its ops: `stream_read` and `stream_write` take the file and run
+without the inode mutex, because they sleep, and `pipe` has its own spinlock for the ring (64 KiB). The lock
 is dropped before every `wake_up()` and before sleeping. Each end is a file of its own; the
 last close of an end (`release`) wakes the other side: EOF for readers, `EPIPE` and `SIGPIPE`
 for writers. A write of `PIPE_BUF` or less goes in whole. Sleeps are interruptible
-(`-ERESTARTSYS`). `O_NONBLOCK` is refused.
+(`-ERESTARTSYS`). With `O_NONBLOCK` on the file (open, `fcntl`, `pipe2`) a read or write that would wait gives
+`-EAGAIN`, or what was done so far; the tty does the same.
+
+A named pipe (`mknod`/`mkfifo`) is the same inode type with no one on either end yet, linked into a dir.
+Opening it (`ops->open`, not for `O_PATH`) counts an end, and a read-only open waits for a writer, a
+write-only one for a reader (`ENXIO` without one if `O_NONBLOCK`); `O_RDWR` never waits. `release` counts the
+ends down, for both of an `O_RDWR` file.
 
 `read_to_user()` stops after one chunk on a stream, and `lseek`/`pread` give `ESPIPE`. A stream
 has no position, so `read` and `write` skip `pos_lock`: a reader asleep on a file that fork
@@ -106,6 +112,12 @@ of its size, and the task starts at its entry. `AT_BASE` says where it is, `AT_E
 `AT_PHDR` still describe the program. `ld.so` maps the libraries itself, through file mmap.
 Each `PT_LOAD` becomes a vma with its `p_flags`, and its file part is copied in. Pages come
 zeroed, so bss needs nothing.
+
+A file that starts with `#!` is a script: `exec_script()` reads the first line (256 bytes at most), takes the
+interpreter and the one argument after it (the whole rest of the line), and loads the interpreter with `interp
+[arg] script-path args...`, as linux does, up to 4 deep (`ELOOP`). The script's path is absolute here, where
+linux passes it as given. busybox's ash can not run a script without this: it would have to re-run itself
+through `/proc/self/exe`.
 
 The stack follows the SysV ABI, what glibc's `_start` expects: `argc`, `argv`, `envp` and
 `auxv` at a 16 aligned `rsp`, the strings above them. `auxv` has what static glibc reads at

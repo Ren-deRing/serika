@@ -1,3 +1,4 @@
+#include <serika/boot.h>
 #include <serika/buddy.h>
 #include <serika/cpu.h>
 #include <serika/errno.h>
@@ -93,4 +94,34 @@ long sys_getrusage(long who, long ubuf) {
     if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) return -EINVAL;
 
     return copy_to_user(ubuf, zero, sizeof(zero));
+}
+
+/* the mask is the online cpus: bit n is cpu n. its size is a whole number of longs, as linux's */
+long sys_sched_getaffinity(long pid, long size, long umask) {
+    uint64_t online = g_bootinfo.smp.total_cores >= 64 ? ~0ULL : (1ULL << g_bootinfo.smp.total_cores) - 1;
+
+    if (size < 0 || (size & 7)) return -EINVAL;
+    if (size < 8) return -EINVAL;
+
+    if (pid != 0 && sys_getpgid(pid) < 0) return -ESRCH;
+
+    /* bits past the 64th would be more cpus than the mask above names: not here */
+    uint64_t mask[16] = { online };
+    size_t bytes = size > (long)sizeof(mask) ? sizeof(mask) : (size_t)size;
+
+    return copy_to_user(umask, mask, bytes) ?: (long)bytes;
+}
+
+/* tasks run on any cpu the scheduler picks: a mask with an online cpu in it is accepted, and not kept */
+long sys_sched_setaffinity(long pid, long size, long umask) {
+    uint64_t first;
+
+    if (size < 8) return -EINVAL;
+    if (pid != 0 && sys_getpgid(pid) < 0) return -ESRCH;
+
+    if (copy_from_user(&first, umask, sizeof(first)) != 0) return -EFAULT;
+
+    uint64_t online = g_bootinfo.smp.total_cores >= 64 ? ~0ULL : (1ULL << g_bootinfo.smp.total_cores) - 1;
+
+    return (first & online) ? 0 : -EINVAL;
 }

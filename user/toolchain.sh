@@ -16,7 +16,7 @@ copy() {
     done
 }
 
-progs="/usr/bin/gcc /usr/bin/make /usr/bin/as /usr/bin/ld.bfd $cc1 $libexec/collect2 $libexec/liblto_plugin.so $libexec/lto-wrapper"
+progs="/usr/bin/gcc /usr/bin/make /usr/bin/as /usr/bin/ld.bfd /usr/bin/ar /usr/bin/ranlib /usr/bin/nm /usr/bin/objcopy /usr/bin/strip $cc1 $libexec/collect2 $libexec/liblto_plugin.so $libexec/lto-wrapper"
 copy $progs
 
 mkdir -p "$root/usr/bin" "$root/lib64"
@@ -29,6 +29,9 @@ for lib in $(ldd $progs 2>/dev/null | awk '/=> \//{print $3}' | sort -u); do
     cp -L "$lib" "$root/lib64/$(basename "$lib")"
 done
 
+# libm.so is a script that asks for this one if it is needed
+cp -L /lib64/libmvec.so.1 "$root/lib64/"
+
 # gcc's own start files and libraries, and its headers
 for f in crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o libgcc.a libgcc_eh.a libgcc_s.so libgcc_s_asneeded.so libatomic.so libatomic_asneeded.so libatomic.a; do
     copy "$libgcc/$f"
@@ -38,7 +41,7 @@ mkdir -p "$root$libgcc"
 cp -r "$libgcc/include" "$root$libgcc/"
 
 # glibc's headers and start files, and the linux headers they include: every file of the two packages there
-files=$(rpm -ql glibc-devel kernel-headers | grep -E '^/usr/(include/|lib64/(crt1|crti|crtn|Scrt1)\.o$|lib64/(libc\.so|libc_nonshared\.a|libm\.so)$)')
+files=$(rpm -ql glibc-devel kernel-headers | grep -E '^/usr/(include/|lib64/(crt1|crti|crtn|Scrt1)\.o$|lib64/(libc\.so|libc_nonshared\.a|libm\.so)$|lib64/(libpthread|libdl|librt|libutil|libanl)\.a$)')
 
 for f in $files; do
     [ -f "$f" ] && copy "$f"

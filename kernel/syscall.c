@@ -67,6 +67,15 @@ static long sys_madvise(long addr, long len, long advice) {
     return -EINVAL;
 }
 
+#define MREMAP_MAYMOVE 1
+
+/* the mapping stays where it is unless MAYMOVE. FIXED and DONTUNMAP are not there */
+static long sys_mremap(long old, long old_size, long new_size, long flags) {
+    if (flags & ~MREMAP_MAYMOVE) return -EINVAL;
+
+    return mm_remap(current_task()->mm, old, old_size, new_size, flags & MREMAP_MAYMOVE);
+}
+
 static long sys_munmap(long addr, long len) {
     return mm_unmap(current_task()->mm, addr, len);
 }
@@ -104,6 +113,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_MMAP:            return sys_mmap(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_MPROTECT:        return sys_mprotect(args[0], args[1], args[2]);
         case SYS_MUNMAP:          return sys_munmap(args[0], args[1]);
+        case SYS_MREMAP:          return sys_mremap(args[0], args[1], args[2], (int)args[3]);
         case SYS_MADVISE:         return sys_madvise(args[0], args[1], args[2]);
         case SYS_BRK:             return sys_brk(args[0]);
         case SYS_RT_SIGACTION:    return sys_rt_sigaction(args[0], args[1], args[2], args[3]);
@@ -147,6 +157,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_FSYNC:
         case SYS_FDATASYNC:       return sys_fsync(args[0]);
         case SYS_SYNC:            return 0; /* memory only */
+        case SYS_MKNOD:           return sys_mknodat(AT_FDCWD, args[0], args[1], args[2]);
         case SYS_MKDIR:           return sys_mkdirat(AT_FDCWD, args[0], args[1]);
         case SYS_SYMLINK:         return sys_symlinkat(args[0], AT_FDCWD, args[1]);
         case SYS_READLINK:        return sys_readlinkat(AT_FDCWD, args[0], args[1], args[2]);
@@ -167,6 +178,8 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_SETSID:          return sys_setsid();
         case SYS_GETPGID:         return sys_getpgid((int)args[0]);
         case SYS_GETSID:          return sys_getsid((int)args[0]);
+        case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity((int)args[0], args[1], args[2]);
+        case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity((int)args[0], args[1], args[2]);
         case SYS_RT_SIGPENDING:   return sys_rt_sigpending(args[0], args[1]);
         case SYS_RT_SIGSUSPEND:   return sys_rt_sigsuspend(args[0], args[1]);
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);
@@ -188,6 +201,7 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_FCHMODAT:        return sys_fchmodat((int)args[0], args[1], args[2]);
         case SYS_UTIMENSAT:       return sys_utimensat((int)args[0], args[1], args[2], (int)args[3]);
         case SYS_RENAMEAT2:       return sys_renameat2((int)args[0], args[1], (int)args[2], args[3], (int)args[4]);
+        case SYS_MKNODAT:         return sys_mknodat((int)args[0], args[1], args[2], args[3]);
         case SYS_MKDIRAT:         return sys_mkdirat((int)args[0], args[1], args[2]);
         case SYS_NEWFSTATAT:      return sys_newfstatat((int)args[0], args[1], args[2], args[3]);
         case SYS_SYMLINKAT:       return sys_symlinkat(args[0], (int)args[1], args[2]);

@@ -80,7 +80,7 @@ struct tty_operations {
 /* the line discipline between the device and read(): n_tty is the only one.
  * all but read and receive_buf are called with tty->lock held */
 struct tty_ldisc_ops {
-    long (*read)(struct tty_struct *tty, char *buf, size_t n);
+    long (*read)(struct tty_struct *tty, char *buf, size_t n, bool nonblock); /* -EAGAIN if it would wait */
     void (*receive_buf)(struct tty_struct *tty, const uint8_t *cp, size_t n); /* irq context */
     void (*set_termios)(struct tty_struct *tty, const struct ktermios *old);
     void (*flush_buffer)(struct tty_struct *tty);

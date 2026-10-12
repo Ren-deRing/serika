@@ -173,7 +173,7 @@ run: build
 	@qemu-system-x86_64 \
 		-machine q35 \
 		-cdrom $(IMAGE) \
-		-m 512M \
+		-m 1G \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
 		-chardev stdio,id=ser0,signal=off \

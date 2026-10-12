@@ -38,10 +38,8 @@ static struct pipe *pipe_of(struct inode *inode) {
 }
 
 /* sleeping with the lock off: the wakers change the fields and wake_up() after */
-static long pipe_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
-    (void)pos;
-
-    struct pipe *p = pipe_of(inode);
+static long pipe_read(struct file *f, void *buf, size_t n) {
+    struct pipe *p = pipe_of(f->inode);
     uint64_t flags = spin_lock_irqsave(&p->lock);
 
     while (p->count == 0) {
@@ -51,6 +49,8 @@ static long pipe_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
         }
 
         spin_unlock_irqrestore(&p->lock, flags);
+
+        if (f->flags & O_NONBLOCK) return -EAGAIN;
 
         int err = wait_event_interruptible(p->readable, p->count || !p->writers);
         if (err) return err;
@@ -75,10 +75,8 @@ static long pipe_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
     return n;
 }
 
-static long pipe_write(struct inode *inode, const void *buf, size_t n, uint64_t pos) {
-    (void)pos;
-
-    struct pipe *p = pipe_of(inode);
+static long pipe_write(struct file *f, const void *buf, size_t n) {
+    struct pipe *p = pipe_of(f->inode);
     size_t done = 0;
 
     uint64_t flags = spin_lock_irqsave(&p->lock);
@@ -97,6 +95,8 @@ static long pipe_write(struct inode *inode, const void *buf, size_t n, uint64_t 
 
         if (PIPE_SIZE - p->count < want) {
             spin_unlock_irqrestore(&p->lock, flags);
+
+            if (f->flags & O_NONBLOCK) return done ? (long)done : -EAGAIN;
 
             int err = wait_event_interruptible(p->writable, PIPE_SIZE - p->count >= want || !p->readers);
             if (err) return done ? (long)done : err;
@@ -154,13 +154,43 @@ static void pipe_release(struct inode *inode, uint32_t fflags) {
 
     uint64_t flags = spin_lock_irqsave(&p->lock);
 
-    if ((fflags & O_ACCMODE) == O_WRONLY) p->writers--;
-    else                                  p->readers--;
+    if ((fflags & O_ACCMODE) != O_WRONLY) p->readers--;
+    if ((fflags & O_ACCMODE) != O_RDONLY) p->writers--;
 
     spin_unlock_irqrestore(&p->lock, flags);
 
     wake_up(&p->readable);
     wake_up(&p->writable);
+}
+
+/* a named pipe is opened: an end waits for the other one, unless O_NONBLOCK or both are ours */
+static int pipe_open(struct inode *inode, uint32_t fflags) {
+    struct pipe *p = pipe_of(inode);
+    uint32_t acc = fflags & O_ACCMODE;
+    bool nonblock = fflags & O_NONBLOCK;
+
+    uint64_t flags = spin_lock_irqsave(&p->lock);
+
+    if (acc == O_WRONLY && nonblock && !p->readers) {
+        spin_unlock_irqrestore(&p->lock, flags);
+        return -ENXIO;
+    }
+
+    if (acc != O_WRONLY) p->readers++;
+    if (acc != O_RDONLY) p->writers++;
+
+    spin_unlock_irqrestore(&p->lock, flags);
+
+    wake_up(&p->readable); /* whoever waited for this end */
+    wake_up(&p->writable);
+
+    if (nonblock || acc == O_RDWR) return 0;
+
+    int err = acc == O_RDONLY ? wait_event_interruptible(p->readable, p->writers)
+                              : wait_event_interruptible(p->writable, p->readers);
+    if (err) pipe_release(inode, fflags);
+
+    return err;
 }
 
 static void pipe_evict(struct inode *inode) {
@@ -171,17 +201,19 @@ static void pipe_evict(struct inode *inode) {
 }
 
 static const struct inode_ops pipe_ops = {
-    .read    = pipe_read,
-    .write   = pipe_write,
-    .evict   = pipe_evict,
-    .poll    = pipe_poll,
-    .stream  = true,
-    .release = pipe_release,
+    .stream_read  = pipe_read,
+    .stream_write = pipe_write,
+    .evict        = pipe_evict,
+    .poll         = pipe_poll,
+    .stream       = true,
+    .open         = pipe_open,
+    .release      = pipe_release,
 };
 
-int pipe_create(struct file *out[2]) {
+/* a pipe with nobody on either end yet */
+static struct inode *pipe_inode_new(uint32_t mode) {
     struct pipe *p = kmalloc(sizeof(struct pipe));
-    if (!p) return -ENOMEM;
+    if (!p) return NULL;
 
     memset(p, 0, sizeof(*p));
     spin_lock_init(&p->lock);
@@ -189,26 +221,33 @@ int pipe_create(struct file *out[2]) {
     wait_queue_init(&p->writable);
 
     void *phys = alloc_pages(PIPE_ORDER);
-    if (!phys) {
+    struct inode *inode = phys ? inode_alloc(&pipe_ops, S_IFIFO | (mode & 07777)) : NULL;
+
+    if (!inode) {
+        if (phys) free_pages(phys, PIPE_ORDER);
         kfree(p);
-        return -ENOMEM;
+        return NULL;
     }
 
     p->buf = (uint8_t *)P2V((uintptr_t)phys);
-    p->readers = p->writers = 1;
-
-    struct inode *inode = inode_alloc(&pipe_ops, S_IFIFO | 0600);
-    if (!inode) {
-        free_pages(phys, PIPE_ORDER);
-        kfree(p);
-        return -ENOMEM;
-    }
-
     inode->priv = p;
+
+    return inode;
+}
+
+struct inode *fifo_create(uint32_t mode) {
+    return pipe_inode_new(mode);
+}
+
+int pipe_create(struct file *out[2], uint32_t flags) {
+    struct inode *inode = pipe_inode_new(0600);
+    if (!inode) return -ENOMEM;
+
+    pipe_of(inode)->readers = pipe_of(inode)->writers = 1;
     iget(inode); /* the second file's */
 
-    struct file *r = file_alloc(inode, O_RDONLY);
-    struct file *w = file_alloc(inode, O_WRONLY);
+    struct file *r = file_alloc(inode, O_RDONLY | (flags & O_NONBLOCK));
+    struct file *w = file_alloc(inode, O_WRONLY | (flags & O_NONBLOCK));
 
     if (!r || !w) {
         kfree(r);

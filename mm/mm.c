@@ -556,6 +556,75 @@ int mm_discard(struct mm *mm, uintptr_t addr, size_t size) {
     return err;
 }
 
+/* mremap: a mapping made smaller, or bigger where it is if the address space after it is free, or, if the caller
+ * lets it, moved. a moved mapping takes its pages along, not copies of them. one vma, and not the heap's */
+long mm_remap(struct mm *mm, uintptr_t old, size_t old_size, size_t new_size, bool may_move) {
+    if ((old & (PAGE_SIZE - 1)) || !old_size || !new_size) return -EINVAL;
+
+    old_size = ALIGN_UP(old_size, PAGE_SIZE);
+    new_size = ALIGN_UP(new_size, PAGE_SIZE);
+
+    uintptr_t old_end = old + old_size;
+    if (old_end < old || old_end > USER_SPACE_END || new_size > USER_SPACE_END) return -EINVAL;
+
+    struct vma *moved = kmalloc(sizeof(struct vma));
+    if (!moved) return -ENOMEM;
+
+    long ret = old;
+
+    mutex_lock(&mm->lock);
+
+    struct vma *vma = vma_find(mm, old);
+
+    if (!vma || vma->end < old_end || (vma->start < mm->brk_end && vma->end > mm->brk_start)) {
+        ret = -EFAULT;
+    } else if (new_size == old_size) {
+        /* as it is */
+    } else if (new_size < old_size) {
+        ret = unmap_range(mm, old + new_size, old_end) ?: (long)old;
+    } else if (vma->end == old_end && old + new_size <= USER_SPACE_END && !vma_overlaps(mm, old_end, old + new_size)) {
+        vma->end = old + new_size;
+    } else if (!may_move) {
+        ret = -ENOMEM;
+    } else if (new_size > mm->mmap_next || mm->mmap_next - new_size < mm->brk_end ||
+               vma_overlaps(mm, mm->mmap_next - new_size, mm->mmap_next)) {
+        ret = -ENOMEM;
+    } else {
+        uintptr_t to = mm->mmap_next - new_size;
+        mm->mmap_next = to;
+
+        if (vma->file) fget(vma->file);
+
+        *moved = (struct vma){ .start = to, .end = to + new_size, .prot = vma->prot, .file = vma->file,
+                               .off = vma->off + (old - vma->start) };
+        RB_INSERT(vma_tree, &mm->vmas, moved);
+        moved = NULL;
+
+        /* read only: a write faults, and cow_break() gives it back if the frame is ours alone */
+        uint32_t rights = user_rights((vma->prot & ~PROT_WRITE) | PROT_READ);
+
+        for (size_t off = 0; off < old_size; off += PAGE_SIZE) {
+            uintptr_t frame_phys;
+            bool writable;
+
+            if (!pmap_lookup(mm->pmap, old + off, &writable)) continue;
+
+            pmap_clear(mm->pmap, old + off, PAGE_SIZE, &frame_phys, 1);
+
+            if (pmap_map(mm->pmap, to + off, frame_phys, PAGE_SIZE, rights) != 0) frame_put(frame_phys);
+        }
+
+        pmap_shootdown(mm->pmap, old, old_size);
+
+        ret = unmap_range(mm, old, old_end) ?: (long)to;
+    }
+
+    mutex_unlock(&mm->lock);
+
+    kfree(moved);
+    return ret;
+}
+
 /* mm->lock held. the heap's last vma grows, unless munmap() took that end */
 static bool brk_grow(struct mm *mm, uintptr_t new_end) {
     if (new_end > mm->mmap_next || vma_overlaps(mm, mm->brk_end, new_end)) return false;

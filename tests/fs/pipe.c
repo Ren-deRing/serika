@@ -8,7 +8,7 @@ bool test_pipe() {
     char buf[16];
     uint64_t pos = 0;
 
-    TEST_ASSERT(pipe_create(fds) == 0);
+    TEST_ASSERT(pipe_create(fds, 0) == 0);
 
     TEST_ASSERT(kernel_write(fds[1], "hello", 5, &pos) == 5);
     TEST_ASSERT(kernel_read(fds[0], buf, 3, &pos) == 3);

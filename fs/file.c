@@ -465,7 +465,7 @@ long sys_faccessat(long dirfd, long upath, long mode) {
     int err = path_from_user(dirfd, upath, &path);
     if (err) return err;
 
-    err = vfs_open(path, O_RDONLY, 0, &f);
+    err = vfs_open(path, O_PATH, 0, &f);
     kfree(path);
     if (err) return err;
 
@@ -569,16 +569,12 @@ long sys_fcntl(long fd, long cmd, long arg) {
             vfs_close(f);
             return ret;
 
-        /* only O_APPEND changes. a nonblocking file is not there yet */
+        /* only these two change */
         case F_SETFL:
-            if (arg & O_NONBLOCK) {
-                printk("syscall: O_NONBLOCK not supported -- task %lu\n", current_task()->id);
-                return -EINVAL;
-            }
-
             if (!(f = fd_get(fd))) return -EBADF;
 
-            __atomic_store_n(&f->flags, (f->flags & ~O_APPEND) | (arg & O_APPEND), 0); /* __ATOMIC_RELAXED */
+            __atomic_store_n(&f->flags, (f->flags & ~(O_APPEND | O_NONBLOCK)) | (arg & (O_APPEND | O_NONBLOCK)),
+                             0); /* __ATOMIC_RELAXED */
             vfs_close(f);
             return 0;
     }
@@ -592,12 +588,9 @@ long sys_pipe2(long ufds, long flags) {
     struct file *f[2];
     int fds[2];
 
-    if (flags & ~O_CLOEXEC) {
-        if (flags & O_NONBLOCK) printk("syscall: O_NONBLOCK not supported -- task %lu\n", current_task()->id);
-        return -EINVAL;
-    }
+    if (flags & ~(O_CLOEXEC | O_NONBLOCK)) return -EINVAL;
 
-    int err = pipe_create(f);
+    int err = pipe_create(f, flags);
     if (err) return err;
 
     fds[0] = fd_install(files, f[0], flags & O_CLOEXEC, 0);
@@ -1083,5 +1076,37 @@ long sys_utimensat(long dirfd, long upath, long utimes, long flags) {
 
     err = vfs_utimes(f->inode, atime, mtime);
     vfs_close(f);
+    return err;
+}
+
+/* a fifo, or an empty file. a device is not for a program to make */
+long sys_mknodat(long dirfd, long upath, long mode, long dev) {
+    (void)dev;
+
+    char *path;
+    uint32_t perm = mode & 07777 & ~current_task()->files->umask;
+
+    int err = path_from_user(dirfd, upath, &path);
+    if (err) return err;
+
+    switch (mode & S_IFMT) {
+        case S_IFIFO:
+            err = vfs_mkfifo(path, perm);
+            break;
+
+        case 0:
+        case S_IFREG: {
+            struct file *f;
+
+            err = vfs_open(path, O_WRONLY | O_CREAT | O_EXCL, perm, &f);
+            if (!err) vfs_close(f);
+            break;
+        }
+
+        default:
+            err = -EPERM;
+    }
+
+    kfree(path);
     return err;
 }
