@@ -89,7 +89,7 @@ bool test_vfs_initrd() {
     vfs_close(f);
 
     pos = 0;
-    TEST_ASSERT(vfs_open("/bin/check", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(vfs_open("/bin/hello", O_RDONLY, 0, &f) == 0);
     TEST_ASSERT(S_ISREG(f->inode->mode));
     TEST_ASSERT(kernel_read(f, buf, 4, &pos) == 4);
     TEST_ASSERT(memcmp(buf, "\x7f" "ELF", 4) == 0);

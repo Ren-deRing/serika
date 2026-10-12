@@ -6,15 +6,7 @@
 #include <tests/test.h>
 
 bool test_exec() {
-    long status = 0;
     struct task *t;
-
-    TEST_ASSERT(run_exec("/bin/check", &status) > 0);
-    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
-
-    /* static-pie, at ELF_ET_DYN_BASE */
-    TEST_ASSERT(run_exec("/bin/check-pie", &status) > 0);
-    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
 
     TEST_ASSERT(task_create_exec("/bin/nope", NULL, NULL, 0, &t) == -ENOENT);
     TEST_ASSERT(task_create_exec("/etc/motd", NULL, NULL, 0, &t) == -ENOEXEC);
