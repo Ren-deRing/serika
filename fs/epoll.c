@@ -121,7 +121,7 @@ static uint32_t epoll_poll(struct inode *inode, uint32_t fflags, struct poll_tab
         if (!f) continue;
 
         if (f == it->file) {
-            uint32_t ready = f->inode->ops->poll(f->inode, f->flags, pt);
+            uint32_t ready = vfs_poll(f, pt);
 
             if (ep_events(ready, it->events)) mask = POLLIN;
         }
@@ -262,7 +262,7 @@ long sys_epoll_ctl(long epfd, long op, long fd, long uevent) {
     }
 
     if (target == ef)                          ret = -EINVAL;
-    else if (!target->inode->ops->poll)        ret = -EPERM; /* a file that is always ready */
+    else if (!vfs_pollable(target))             ret = -EPERM; /* a file that is always ready */
     else if (op == EPOLL_CTL_ADD && target->inode->ops == &epoll_ops && ep_has_epoll(epoll_of(target->inode)))
                                                ret = -ELOOP;
     else                                       ret = ep_modify(epoll_of(ef->inode), op, fd, target, &ev);

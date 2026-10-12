@@ -2,6 +2,7 @@
 #include <serika/fcntl.h>
 #include <serika/page.h>
 #include <serika/panic.h>
+#include <serika/poll.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
 #include <serika/string.h>
@@ -35,6 +36,7 @@ void vfs_init(void) {
 
     mem_devices_create();
     fb_devices_create();
+    drm_devices_create();
 }
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
@@ -322,6 +324,15 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
     struct file *f = NULL;
     if (!err && !(f = file_alloc(inode, flags))) err = -ENOMEM;
 
+    if (!err && !(flags & O_PATH) && inode->ops->open_file) {
+        err = inode->ops->open_file(f);
+
+        if (err) {
+            kfree(f);
+            f = NULL;
+        }
+    }
+
     if (err) {
         if (opened && inode->ops->release) inode->ops->release(inode, flags);
         if (inode) iput(inode);
@@ -341,6 +352,7 @@ struct file *file_alloc(struct inode *inode, uint32_t flags) {
     f->flags = flags;
     f->refs  = 1;
     f->pos   = 0;
+    f->priv  = NULL;
     mutex_init(&f->pos_lock);
 
     return f;
@@ -350,10 +362,25 @@ void fget(struct file *f) {
     __atomic_add_fetch(&f->refs, 1, 0); /* __ATOMIC_RELAXED */
 }
 
+bool vfs_pollable(struct file *f) {
+    return f->inode->ops->poll || f->inode->ops->poll_file;
+}
+
+uint32_t vfs_poll(struct file *f, struct poll_table *pt) {
+    const struct inode_ops *ops = f->inode->ops;
+
+    if (ops->poll_file) return ops->poll_file(f, pt);
+    if (ops->poll)      return ops->poll(f->inode, f->flags, pt);
+
+    return POLLIN | POLLOUT; /* a file is always ready */
+}
+
 void vfs_close(struct file *f) {
     if (__atomic_sub_fetch(&f->refs, 1, 4) != 0) return; /* __ATOMIC_ACQ_REL */
 
     flock_release(f);
+
+    if (f->inode->ops->release_file && !(f->flags & O_PATH)) f->inode->ops->release_file(f);
 
     if (f->inode->ops->release && !(f->flags & O_PATH)) f->inode->ops->release(f->inode, f->flags);
 

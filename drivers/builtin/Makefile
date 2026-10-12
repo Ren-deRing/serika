@@ -1,5 +1,6 @@
 DRIVERS := \
 	block \
+	drm \
 	fb \
 	mem \
 	pci \

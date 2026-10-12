@@ -41,6 +41,13 @@ struct inode_ops {
 
     int  (*open)(struct inode *inode, uint32_t flags);    /* a file is being opened: may sleep, no lock held. not for O_PATH */
     void (*release)(struct inode *inode, uint32_t flags); /* a file on it is closed, flags are its. no lock held */
+
+    /* for a device that keeps something for each open file (f->priv): these take the file, and the ones above do not.
+     * open_file runs once the file exists, an error closes it; release_file runs with the last reference, before release */
+    int      (*open_file)(struct file *f);
+    void     (*release_file)(struct file *f);
+    long     (*ioctl_file)(struct file *f, unsigned long cmd, unsigned long arg); /* instead of ioctl */
+    uint32_t (*poll_file)(struct file *f, struct poll_table *pt);                 /* instead of poll */
 };
 
 struct inode {
@@ -72,6 +79,7 @@ struct file {
     uint32_t      refs;     /* atomic */
     uint64_t      pos;      /* pos_lock */
     struct mutex  pos_lock; /* across a whole read or write, user copies included */
+    void         *priv;     /* what open_file() of the inode's ops made */
 };
 
 struct cwd;
@@ -103,6 +111,8 @@ void iput(struct inode *inode);
 int  vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out);
 void vfs_close(struct file *f); /* drops a reference */
 void fget(struct file *f);
+uint32_t vfs_poll(struct file *f, struct poll_table *pt); /* POLL* ready now; a file with no poll op is always ready */
+bool vfs_pollable(struct file *f);                       /* has a poll op */
 void flock_release(struct file *f); /* fs/flock.c. the file's last reference is going: its flock is let go */
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
@@ -141,6 +151,7 @@ uintptr_t vfs_getpage(struct inode *inode, uint64_t index);
 struct inode *console_create(void);
 void mem_devices_create(void);
 void fb_devices_create(void); /* /dev/fb0, if the boot gave a framebuffer */
+void drm_devices_create(void); /* /dev/dri/card0, on the same framebuffer */
 int pipe_create(struct file *out[2], uint32_t flags); /* read end, write end. flags: O_NONBLOCK */
 struct inode *fifo_create(uint32_t mode);              /* a named pipe: link it somewhere */
 void initramfs_unpack(void);

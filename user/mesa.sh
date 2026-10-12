@@ -16,6 +16,9 @@ libs="/usr/lib64/libEGL.so.1 /usr/lib64/libGLESv2.so.2 /usr/lib64/libGLdispatch.
       /usr/lib64/libgbm.so.1 /usr/lib64/dri/libdril_dri.so $(ls /usr/lib64/libgallium-*.so)"
 copy $libs
 
+# gbm loads its backend by the name of the device's driver, or this one
+copy /usr/lib64/gbm/dri_gbm.so
+
 # glvnd finds the vendor by this file, and mesa finds the driver by the name of its link
 copy /usr/share/glvnd/egl_vendor.d/50_mesa.json
 ln -sf libdril_dri.so "$root/usr/lib64/dri/swrast_dri.so"

@@ -3,11 +3,13 @@ INITRD     := $(BUILD_DIR)/initrd.cpio
 
 # against the host's shared glibc: ld.so and the libraries go in /lib64
 GLIBC_CC   := clang
-GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo sockets events
+GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo sockets events drmtest gbmtest
 
 # what a program needs beyond libc and libm
 LIBS_gltest := -lEGL -lGLESv2
 LIBS_fbdemo := -lEGL -lGLESv2
+LIBS_drmtest := -I/usr/include/libdrm -ldrm
+LIBS_gbmtest := -I/usr/include/libdrm -lgbm -lEGL -lGLESv2 -ldrm
 GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libgcc_s.so.1
 EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 

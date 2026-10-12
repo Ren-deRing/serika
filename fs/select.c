@@ -59,8 +59,7 @@ static unsigned poll_pass(struct pollfd *fds, unsigned nfds, struct poll_table *
             continue;
         }
 
-        const struct inode_ops *ops = f->inode->ops;
-        mask = ops->poll ? ops->poll(f->inode, f->flags, pt) : (POLLIN | POLLOUT); /* a file is always ready */
+        mask = vfs_poll(f, pt);
         vfs_close(f);
 
         mask &= (uint16_t)p->events | POLLERR | POLLHUP;

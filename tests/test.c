@@ -58,6 +58,8 @@ static struct test tests[] = {
     { "exec gl",     test_exec_gl },
     { "exec sockets", test_exec_sockets },
     { "exec events", test_exec_events },
+    { "exec drm",    test_exec_drm },
+    { "exec gbm",    test_exec_gbm },
     { "signal glibc", test_signal_glibc },
     { "fork glibc",  test_fork_glibc },
     { "thread glibc", test_thread_glibc },

@@ -452,7 +452,7 @@ long sys_ioctl(long fd, long cmd, long arg) {
     }
 
     const struct inode_ops *ops = f->inode->ops;
-    long ret = ops->ioctl ? ops->ioctl(f->inode, cmd, arg) : -ENOTTY;
+    long ret = ops->ioctl_file ? ops->ioctl_file(f, cmd, arg) : ops->ioctl ? ops->ioctl(f->inode, cmd, arg) : -ENOTTY;
 
     vfs_close(f);
     return ret;
