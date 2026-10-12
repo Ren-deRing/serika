@@ -609,3 +609,14 @@ void task_group_exit(long code) {
 
     task_exit(code);
 }
+
+/* the process's parent, which is the leader's. 1 once orphaned */
+long sys_getppid(void) {
+    struct task *leader = current_task()->group->leader;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+    long ppid = leader->parent ? (long)leader->parent->id : 1;
+    spin_unlock_irqrestore(&tasklist_lock, f);
+
+    return ppid;
+}

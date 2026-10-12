@@ -178,6 +178,7 @@ static int pmap_map_page(struct pmap *pmap, uintptr_t va, uintptr_t pa, uint32_t
     if (pt[idx] & PTE_PRESENT) return -1;
 
     if (flags & PROT_WC) pte_flags |= PTE_PAT | PTE_PWT;
+    if (flags & PROT_UC) pte_flags |= PTE_PCD;
 
     pt[idx] = (pa & PTE_ADDR_MASK) | pte_flags;
 

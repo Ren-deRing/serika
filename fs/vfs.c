@@ -17,7 +17,15 @@ void vfs_init(void) {
     if (!vfs_root) panic("vfs: unable to create the root -- out of memory?");
 
     console_inode = console_create();
-    if (!console_inode) panic("vfs: unable to create the console -- out of memory?");
+    if (!console_inode) panic("vfs: no console tty -- is the serial driver up?");
+
+    /* one tty: what the console, /dev/tty and the uart are */
+    static const char *const names[] = { "/dev/console", "/dev/tty", "/dev/ttyS0" };
+
+    if (vfs_mkdir("/dev", 0755) != 0) panic("vfs: unable to create /dev -- out of memory?");
+
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        if (vfs_link_inode(names[i], console_inode) != 0) panic("vfs: unable to create %s -- out of memory?", names[i]);
 }
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
@@ -222,6 +230,36 @@ int vfs_mkdir(const char *path, uint32_t mode) {
 
     iput(dir);
     if (inode) iput(inode);
+
+    return err;
+}
+
+int vfs_link_inode(const char *path, struct inode *inode) {
+    struct inode *dir, *found = NULL;
+    const char *name;
+    size_t len;
+
+    int err = walk_parent(path, &dir, &name, &len);
+    if (err) return err;
+
+    if (len == 0) err = -EEXIST; /* "/" */
+    else if (!S_ISDIR(dir->mode)) err = -ENOTDIR;
+    else if (len > NAME_MAX) err = -ENAMETOOLONG;
+    else if (!dir->ops->link) err = -EPERM;
+
+    if (!err) {
+        mutex_lock(&dir->lock);
+
+        err = lookup_locked(dir, name, len, &found);
+
+        if (err == -ENOENT) err = dir->ops->link(dir, name, len, inode);
+        else if (!err)      err = -EEXIST;
+
+        mutex_unlock(&dir->lock);
+    }
+
+    iput(dir);
+    if (found) iput(found);
 
     return err;
 }

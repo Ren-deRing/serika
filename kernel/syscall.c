@@ -65,8 +65,11 @@ long syscall_dispatch(long nr, const long args[6]) {
     switch (nr) {
         case SYS_READ:            return sys_read(args[0], args[1], args[2]);
         case SYS_WRITE:           return sys_write(args[0], args[1], args[2]);
+        case SYS_OPEN:            return sys_openat(AT_FDCWD, args[0], args[1], args[2]);
         case SYS_CLOSE:           return sys_close(args[0]);
+        case SYS_STAT:            return sys_newfstatat(AT_FDCWD, args[0], args[1], 0);
         case SYS_FSTAT:           return sys_fstat(args[0], args[1]);
+        case SYS_LSTAT:           return sys_newfstatat(AT_FDCWD, args[0], args[1], 0); /* no links */
         case SYS_LSEEK:           return sys_lseek(args[0], args[1], args[2]);
         case SYS_MMAP:            return sys_mmap(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_MPROTECT:        return sys_mprotect(args[0], args[1], args[2]);
@@ -76,7 +79,12 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
         case SYS_IOCTL:           return sys_ioctl(args[0], args[1], args[2]);
         case SYS_PREAD64:         return sys_pread64(args[0], args[1], args[2], args[3]);
+        case SYS_READV:           return sys_readv(args[0], args[1], args[2]);
+        case SYS_WRITEV:          return sys_writev(args[0], args[1], args[2]);
         case SYS_ACCESS:          return sys_access(args[0], args[1]);
+        case SYS_PIPE:            return sys_pipe2(args[0], 0);
+        case SYS_DUP:             return sys_dup(args[0]);
+        case SYS_DUP2:            return sys_dup2(args[0], args[1]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
         case SYS_GETPID:          return sys_getpid();
         case SYS_CLONE:           return sys_clone(args[0], args[1], args[2], args[3], args[4]);
@@ -86,18 +94,39 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_EXIT:            return sys_exit(args[0]);
         case SYS_WAIT4:           return sys_wait4(args[0], args[1], args[2], args[3]);
         case SYS_KILL:            return sys_kill(args[0], args[1]);
+        case SYS_UNAME:           return sys_uname(args[0]);
+        case SYS_FCNTL:           return sys_fcntl(args[0], args[1], args[2]);
+        case SYS_GETCWD:          return sys_getcwd(args[0], args[1]);
+        case SYS_CHDIR:           return sys_chdir(args[0]);
+        case SYS_MKDIR:           return sys_mkdirat(AT_FDCWD, args[0], args[1]);
+        case SYS_READLINK:        return sys_readlinkat(AT_FDCWD, args[0], args[1], args[2]);
+        case SYS_UMASK:           return sys_umask(args[0]);
+        case SYS_GETUID:
+        case SYS_GETGID:
+        case SYS_GETEUID:
+        case SYS_GETEGID:         return sys_getuid();
+        case SYS_SETUID:
+        case SYS_SETGID:          return sys_setuid(args[0]);
+        case SYS_GETPPID:         return sys_getppid();
+        case SYS_GETPGRP:         return sys_getpgrp();
         case SYS_RT_SIGPENDING:   return sys_rt_sigpending(args[0], args[1]);
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);
         case SYS_GETTID:          return sys_gettid();
         case SYS_TKILL:           return sys_tkill(args[0], args[1]);
         case SYS_FUTEX:           return sys_futex(args[0], args[1], args[2], args[3], args[4], args[5]);
+        case SYS_GETDENTS64:      return sys_getdents64(args[0], args[1], args[2]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
         case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
         case SYS_EXIT_GROUP:      return sys_exit_group(args[0]);
         case SYS_TGKILL:          return sys_tgkill(args[0], args[1], args[2]);
         case SYS_OPENAT:          return sys_openat(args[0], args[1], args[2], args[3]);
+        case SYS_MKDIRAT:         return sys_mkdirat(args[0], args[1], args[2]);
         case SYS_NEWFSTATAT:      return sys_newfstatat(args[0], args[1], args[2], args[3]);
+        case SYS_READLINKAT:      return sys_readlinkat(args[0], args[1], args[2], args[3]);
+        case SYS_DUP3:            return sys_dup3(args[0], args[1], args[2]);
+        case SYS_PIPE2:           return sys_pipe2(args[0], args[1]);
+        case SYS_PRLIMIT64:       return sys_prlimit64(args[0], args[1], args[2], args[3]);
         case SYS_FACCESSAT:       return sys_faccessat(args[0], args[1], args[2]);
         case SYS_FACCESSAT2:      return sys_faccessat(args[0], args[1], args[2]); /* flags: no users to tell apart */
     }

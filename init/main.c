@@ -3,6 +3,7 @@
 #include <serika/compiler.h>
 #include <serika/cpu.h>
 #include <serika/ftrace.h>
+#include <serika/irq.h>
 #include <serika/patch.h>
 #include <serika/panic.h>
 #include <serika/pmap.h>
@@ -14,6 +15,8 @@
 #include <serika/symbol.h>
 #include <serika/tick.h>
 #include <serika/vfs.h>
+
+#include <asm/acpi.h>
 
 #include <tests/test.h>
 
@@ -40,6 +43,10 @@ notrace void start_init(void) {
     smp_release_aps();
 
     printk("smp: %u cpus online\n", g_bootinfo.smp.total_cores);
+
+    acpi_init();
+    ioapic_init();
+    serial_tty_init();
 
     vfs_init();
     initramfs_unpack();

@@ -1,0 +1,247 @@
+#include <serika/errno.h>
+#include <serika/mm.h>
+#include <serika/slab.h>
+#include <serika/stat.h>
+#include <serika/string.h>
+#include <serika/syscall.h>
+#include <serika/tty.h>
+#include <serika/vfs.h>
+
+#define TCGETS      0x5401
+#define TCSETS      0x5402
+#define TCSETSW     0x5403
+#define TCSETSF     0x5404
+#define TCFLSH      0x540B
+#define TIOCSCTTY   0x540E
+#define TIOCGPGRP   0x540F
+#define TIOCSPGRP   0x5410
+#define TIOCGWINSZ  0x5413
+#define TIOCSWINSZ  0x5414
+#define FIONREAD    0x541B
+#define TIOCNOTTY   0x5422
+#define TIOCGSID    0x5429
+#define TCGETS2     0x802c542a
+#define TCSETS2     0x402c542b
+#define TCSETSW2    0x402c542c
+#define TCSETSF2    0x402c542d
+
+#define TCIFLUSH  0
+#define TCIOFLUSH 2
+
+struct tty_struct *console_tty;
+
+void tty_insert_flip_char(struct tty_struct *tty, uint8_t c) {
+    if (tty->flip_len == TTY_FLIP_SIZE) tty_flip_buffer_push(tty);
+
+    tty->flip[tty->flip_len++] = c;
+}
+
+void tty_flip_buffer_push(struct tty_struct *tty) {
+    if (!tty->flip_len) return;
+
+    tty->ldisc->receive_buf(tty, tty->flip, tty->flip_len);
+    tty->flip_len = 0;
+}
+
+/* a stream: read sleeps, so the inode lock is not held */
+static long tty_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
+    (void)pos;
+
+    struct tty_struct *tty = inode->priv;
+    return tty->ldisc->read(tty, buf, n);
+}
+
+static long tty_write(struct inode *inode, const void *buf, size_t n, uint64_t pos) {
+    (void)pos;
+
+    struct tty_struct *tty = inode->priv;
+    return tty->ops->write(tty, buf, n);
+}
+
+static void set_termios(struct tty_struct *tty, const struct ktermios *new, bool flush) {
+    uint64_t flags = spin_lock_irqsave(&tty->lock);
+
+    struct ktermios old = tty->termios;
+    tty->termios = *new;
+
+    tty->ldisc->set_termios(tty, &old);
+    if (flush) tty->ldisc->flush_buffer(tty);
+
+    spin_unlock_irqrestore(&tty->lock, flags);
+
+    wake_up(&tty->read_wait); /* the mode may have made something ready */
+}
+
+static long tty_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg) {
+    struct tty_struct *tty = inode->priv;
+    uint64_t flags;
+    int err;
+
+    switch (cmd) {
+        case TCGETS:
+        case TCGETS2: {
+            flags = spin_lock_irqsave(&tty->lock);
+            struct ktermios t = tty->termios;
+            spin_unlock_irqrestore(&tty->lock, flags);
+
+            return copy_to_user(arg, &t, cmd == TCGETS ? TTY_TERMIOS_SIZE : sizeof(t));
+        }
+
+        case TCSETS:
+        case TCSETSW:
+        case TCSETSF:
+        case TCSETS2:
+        case TCSETSW2:
+        case TCSETSF2: {
+            bool two = cmd == TCSETS2 || cmd == TCSETSW2 || cmd == TCSETSF2;
+            struct ktermios t;
+
+            /* termios has no speeds: they stay */
+            flags = spin_lock_irqsave(&tty->lock);
+            t = tty->termios;
+            spin_unlock_irqrestore(&tty->lock, flags);
+
+            err = copy_from_user(&t, arg, two ? sizeof(t) : TTY_TERMIOS_SIZE);
+            if (err) return err;
+
+            set_termios(tty, &t, cmd == TCSETSF || cmd == TCSETSF2);
+            return 0;
+        }
+
+        case TCFLSH:
+            if (arg > TCIOFLUSH) return -EINVAL;
+
+            if (arg == TCIFLUSH || arg == TCIOFLUSH) {
+                flags = spin_lock_irqsave(&tty->lock);
+                tty->ldisc->flush_buffer(tty);
+                spin_unlock_irqrestore(&tty->lock, flags);
+            }
+
+            return 0;
+
+        case FIONREAD: {
+            flags = spin_lock_irqsave(&tty->lock);
+            int32_t n = tty->ldisc->input_pending(tty);
+            spin_unlock_irqrestore(&tty->lock, flags);
+
+            return copy_to_user(arg, &n, sizeof(n));
+        }
+
+        /* no sessions: the foreground is whoever it was told, else the asker */
+        case TIOCGPGRP: {
+            flags = spin_lock_irqsave(&tty->lock);
+            int32_t pgrp = tty->pgrp ? tty->pgrp : sys_getpid();
+            spin_unlock_irqrestore(&tty->lock, flags);
+
+            return copy_to_user(arg, &pgrp, sizeof(pgrp));
+        }
+
+        case TIOCSPGRP: {
+            int32_t pgrp;
+
+            err = copy_from_user(&pgrp, arg, sizeof(pgrp));
+            if (err) return err;
+            if (pgrp <= 0) return -EINVAL;
+
+            flags = spin_lock_irqsave(&tty->lock);
+            tty->pgrp = pgrp;
+            spin_unlock_irqrestore(&tty->lock, flags);
+            return 0;
+        }
+
+        case TIOCGWINSZ: {
+            flags = spin_lock_irqsave(&tty->lock);
+            struct winsize ws = tty->winsize;
+            spin_unlock_irqrestore(&tty->lock, flags);
+
+            return copy_to_user(arg, &ws, sizeof(ws));
+        }
+
+        case TIOCSWINSZ: {
+            struct winsize ws;
+
+            err = copy_from_user(&ws, arg, sizeof(ws));
+            if (err) return err;
+
+            flags = spin_lock_irqsave(&tty->lock);
+            tty->winsize = ws;
+            spin_unlock_irqrestore(&tty->lock, flags);
+            return 0;
+        }
+
+        /* the one tty is every process's: nothing to take or give up */
+        case TIOCSCTTY:
+        case TIOCNOTTY:
+            return 0;
+
+        case TIOCGSID: {
+            int32_t sid = sys_getpid();
+
+            return copy_to_user(arg, &sid, sizeof(sid));
+        }
+    }
+
+    return -ENOTTY;
+}
+
+static const struct inode_ops tty_inode_ops = {
+    .read   = tty_read,
+    .write  = tty_write,
+    .ioctl  = tty_ioctl,
+    .stream = true,
+};
+
+/* cooked, echo, 38400 8n1 */
+struct tty_struct *tty_alloc(const struct tty_operations *ops, void *driver_data) {
+    struct tty_struct *tty = kmalloc(sizeof(struct tty_struct));
+    if (!tty) return NULL;
+
+    memset(tty, 0, sizeof(*tty));
+
+    tty->read_buf = kmalloc(N_TTY_BUF_SIZE);
+    tty->inode = inode_alloc(&tty_inode_ops, S_IFCHR | 0620);
+
+    if (!tty->read_buf || !tty->inode) {
+        kfree(tty->read_buf);
+        if (tty->inode) iput(tty->inode);
+        kfree(tty);
+        return NULL;
+    }
+
+    tty->inode->priv = tty;
+    tty->ops = ops;
+    tty->ldisc = &n_tty_ops;
+    tty->driver_data = driver_data;
+
+    spin_lock_init(&tty->lock);
+    wait_queue_init(&tty->read_wait);
+
+    tty->termios = (struct ktermios){
+        .c_iflag = ICRNL,
+        .c_oflag = OPOST | ONLCR,
+        .c_cflag = 0x00bf, /* B38400 | CS8 | CREAD */
+        .c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN,
+        .c_cc = {
+            [VINTR] = 3, [VQUIT] = 28, [VERASE] = 127, [VKILL] = 21, [VEOF] = 4, [VMIN] = 1,
+            [VSTART] = 17, [VSTOP] = 19, [VSUSP] = 26, [VREPRINT] = 18, [VDISCARD] = 15, [VWERASE] = 23,
+            [VLNEXT] = 22,
+        },
+        .c_ispeed = 38400,
+        .c_ospeed = 38400,
+    };
+
+    tty->winsize = (struct winsize){ .ws_row = 24, .ws_col = 80 };
+    return tty;
+}
+
+struct inode *tty_inode(struct tty_struct *tty) {
+    return tty->inode;
+}
+
+/* fd 0, 1 and 2 of the first task, and /dev/console. the caller's reference */
+struct inode *console_create(void) {
+    if (!console_tty) return NULL;
+
+    iget(console_tty->inode);
+    return console_tty->inode;
+}

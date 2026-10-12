@@ -11,6 +11,7 @@
 #define PROT_WC     0x10
 #define PROT_GLOBAL 0x20
 #define PROT_HUGE   0x40
+#define PROT_UC     0x80 /* mmio. 4 KiB pages only */
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE  (1ULL << PAGE_SHIFT)

@@ -18,6 +18,9 @@ GLIBC_BINS := hello files signals fork threads
 GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libgcc_s.so.1
 EXEC       += $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 
+# the host's busybox, static
+EXEC += $(INITRD_DIR)/bin/busybox
+
 LIB_OBJS     := $(LIB:%=$(UOBJ_DIR)/%.o)
 LIB_PIE_OBJS := $(LIB:%=$(UOBJ_DIR)/pie/%.o)
 
@@ -40,6 +43,11 @@ $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
 	@echo "GLIBC : $@"
 	@$(GLIBC_CC) -O2 -Wall -Wextra $< -o $@ -lm
+
+$(INITRD_DIR)/bin/busybox: /usr/bin/busybox
+	@mkdir -p $(dir $@)
+	@echo "CP    : $@"
+	@cp -L $< $@
 
 $(INITRD_DIR)/lib64/%: /lib64/%
 	@mkdir -p $(dir $@)

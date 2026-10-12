@@ -1,7 +1,8 @@
 # VFS
 
 One root, a ramfs, filled at boot from the initrd (cpio newc, a Limine module) by
-`initramfs_unpack()`. No mounts, no dentry cache, no cwd: paths are absolute.
+`initramfs_unpack()`. No mounts, no dentry cache: the kernel walks absolute paths, and
+`path_from_user()` puts the cwd in front of a relative one.
 
 - `struct inode`: mode, size, ops and a `struct mutex`. Refcounted, `iget()` / `iput()`.
 - `struct file`: an inode reference and the open flags. The caller of `kernel_read()` and
@@ -39,8 +40,25 @@ does. That is the one exception to rule 1: the data itself still goes through a 
 so no inode mutex is held while user memory is touched, and nothing on a fault path takes a
 `pos_lock`. Order: `pos_lock`, then the inode mutex, or `pos_lock`, then `mm->lock`.
 
-There is no cwd yet: a relative path starts at the root. The console is a char device, the
-only tty: it answers `TCGETS` so glibc buffers stdout by line, and reads find nothing.
+The cwd is an absolute, normalized string in `struct files` (refcounted, swapped whole by
+`chdir`), so threads share it and fork copies it, as with `CLONE_FS`. There are no links, so
+`..` is lexical. Directory fds are not a start for a path yet. `umask` rides along.
+
+The console is the uart's tty, a char device: see [docs/tty.md](../tty.md). `/dev/console`,
+`/dev/tty` and `/dev/ttyS0` are three names for its one inode, linked by `vfs_init()`.
+
+## Pipes
+
+A pipe is an inode with `stream` set in its ops: `read` and `write` run without the inode
+mutex, because they sleep, and `pipe` has its own spinlock for the ring (64 KiB). The lock
+is dropped before every `wake_up()` and before sleeping. Each end is a file of its own; the
+last close of an end (`release`) wakes the other side: EOF for readers, `EPIPE` and `SIGPIPE`
+for writers. A write of `PIPE_BUF` or less goes in whole. Sleeps are interruptible
+(`-ERESTARTSYS`). `O_NONBLOCK` is refused.
+
+`read_to_user()` stops after one chunk on a stream, and `lseek`/`pread` give `ESPIPE`. A stream
+has no position, so `read` and `write` skip `pos_lock`: a reader asleep on a file that fork
+shared must not hold up a writer of it.
 
 ## exec
 

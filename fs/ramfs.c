@@ -100,6 +100,21 @@ static int ramfs_create(struct inode *dir, const char *name, size_t len, uint32_
     return 0;
 }
 
+static int ramfs_link(struct inode *dir, const char *name, size_t len, struct inode *inode) {
+    struct ramfs_dirent *d = kmalloc(sizeof(struct ramfs_dirent) + len);
+    if (!d) return -ENOMEM;
+
+    iget(inode); /* the name's */
+
+    d->inode = inode;
+    d->len   = len;
+    memcpy(d->name, name, len);
+    list_add_tail(&d->node, &node_of(dir)->entries);
+
+    inode->nlink++;
+    return 0;
+}
+
 static long ramfs_read(struct inode *inode, void *buf, size_t n, uint64_t pos) {
     struct ramfs_node *node = node_of(inode);
     uint8_t *to = buf;
@@ -251,6 +266,7 @@ static void ramfs_evict(struct inode *inode) {
 static const struct inode_ops ramfs_ops = {
     .lookup   = ramfs_lookup,
     .create   = ramfs_create,
+    .link     = ramfs_link,
     .read     = ramfs_read,
     .write    = ramfs_write,
     .truncate = ramfs_truncate,

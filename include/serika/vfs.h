@@ -15,8 +15,10 @@ struct inode;
 struct inode_ops {
     int  (*lookup)(struct inode *dir, const char *name, size_t len, struct inode **out); /* referenced */
     int  (*create)(struct inode *dir, const char *name, size_t len, uint32_t mode, struct inode **out);
+    int  (*link)(struct inode *dir, const char *name, size_t len, struct inode *inode); /* a name for an inode that exists */
     long (*read)(struct inode *inode, void *buf, size_t n, uint64_t pos);
     long (*write)(struct inode *inode, const void *buf, size_t n, uint64_t pos);
+    long (*ioctl)(struct inode *inode, unsigned long cmd, unsigned long arg); /* no lock held: arg is user memory */
     int  (*truncate)(struct inode *inode, uint64_t size);
     long (*getdents)(struct inode *dir, void *buf, size_t n, uint64_t *pos); /* linux_dirent64s, pos is the entry */
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
@@ -72,12 +74,13 @@ struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode); /* one re
 void iget(struct inode *inode);
 void iput(struct inode *inode);
 
-/* absolute paths only, no cwd yet */
+/* absolute paths only: path_from_user() puts the cwd in front */
 int  vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out);
 void vfs_close(struct file *f); /* drops a reference */
 void fget(struct file *f);
 struct file *file_alloc(struct inode *inode, uint32_t flags); /* takes the inode's reference */
 int  vfs_mkdir(const char *path, uint32_t mode);
+int  vfs_link_inode(const char *path, struct inode *inode); /* /dev nodes: a name in a dir */
 
 /* one linux_dirent64 into buf. its size, 0 if n is too small */
 size_t vfs_dirent_put(void *buf, size_t n, uint64_t ino, uint64_t off, uint32_t mode, const char *name, size_t len);
@@ -99,5 +102,4 @@ struct files *files_copy(struct files *old);
 struct file *fd_get(long fd); /* the current task's, referenced. vfs_close() when done */
 void files_close_on_exec(struct files *files);
 
-/* cwd is "/" until there is one: a relative path is from the root */
 int path_from_user(long dirfd, uintptr_t upath, char **out);

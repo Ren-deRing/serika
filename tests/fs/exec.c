@@ -38,3 +38,17 @@ bool test_exec_files() {
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }
+
+/* a shell and its applets on a static binary: pipes, redirection, the cwd, fork and execve */
+bool test_exec_busybox() {
+    const char *const argv[] = { "/bin/busybox", "sh", "/etc/busybox.sh", NULL };
+    struct task *t;
+    long status = 0;
+
+    TEST_ASSERT(task_create_exec("/bin/busybox", argv, NULL, 0, &t) == 0);
+    sched_add_task(t);
+
+    TEST_ASSERT(reap_within(t, &status, 20000) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0); /* the script's number of the check that failed */
+    return true;
+}
