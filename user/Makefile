@@ -56,8 +56,8 @@ $(MESA): mesa.sh /usr/lib64/libEGL.so.1
 	@./mesa.sh $(DISK_ROOT)
 	@touch $@
 
-$(WAYLAND): wayland.sh wayland/wlc.c /usr/lib64/libwlroots-0.20.so
-	@echo "WAYLND: wlc"
+$(WAYLAND): wayland.sh /usr/bin/labwc
+	@echo "WAYLND: labwc"
 	@./wayland.sh $(DISK_ROOT)
 	@touch $@
 

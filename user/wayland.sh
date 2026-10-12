@@ -1,13 +1,10 @@
 #!/bin/sh
-# the compositor, built here against the host's wlroots, a client, and the libraries they load: all of it under usr, which is the disk
+# the compositor and clients from the host, and the libraries they load: all of it under usr, which is the disk
 set -e
 
 root=$1
 
 mkdir -p "$root/usr/bin" "$root/usr/lib64"
-
-clang -O2 -Wall -Wextra -DWLR_USE_UNSTABLE wayland/wlc.c -o "$root/usr/bin/wlc" \
-    $(pkg-config --cflags --libs wlroots-0.20 wayland-server xkbcommon) -lm
 
 # what libinput, xkbcommon and the cursor look for under /usr/share: the device quirks, the keymaps (xkb is
 # at /usr/share/X11/xkb through a link) and the cursors of the default theme
@@ -27,8 +24,22 @@ mkdir -p "$root/usr/libexec/libinput"
 cp -L /usr/bin/libinput /usr/bin/udevadm "$root/usr/bin/"
 cp -L /usr/libexec/libinput/libinput-list-devices /usr/libexec/libinput/libinput-debug-events "$root/usr/libexec/libinput/"
 
+# labwc, a compositor that is not ours (wlroots 0.19, which is what the host has for it). its defaults are in the binary;
+# what it draws text with is pango, so fontconfig needs a configuration and a font
+cp -L /usr/bin/labwc /usr/bin/labnag /usr/bin/Xwayland "$root/usr/bin/" # labwc quits if it has no Xwayland to start for X clients
+mkdir -p "$root/usr/share/fontconfig" "$root/usr/share/fonts/dejavu"
+cp /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf /usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf "$root/usr/share/fonts/dejavu/"
+cat > "$root/usr/share/fontconfig/fonts.conf" <<'EOF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+    <dir>/usr/share/fonts</dir>
+    <cachedir>/tmp/fontconfig</cachedir>
+</fontconfig>
+EOF
+
 # what they need, except what the initrd has
-for lib in $(ldd "$root/usr/bin/wlc" "$root/usr/bin/wayland-info" "$root/usr/bin/libinput" "$root/usr/bin/udevadm" \
+for lib in $(ldd "$root/usr/bin/wayland-info" "$root/usr/bin/libinput" "$root/usr/bin/udevadm" "$root/usr/bin/labwc" "$root/usr/bin/labnag" "$root/usr/bin/Xwayland" \
                  "$root/usr/libexec/libinput/libinput-list-devices" "$root/usr/libexec/libinput/libinput-debug-events" 2>/dev/null | awk '/=> \//{print $3}' | sort -u); do
     case $(basename "$lib") in
         ld-linux-x86-64.so.2|libc.so.6|libm.so.6|libgcc_s.so.1) continue ;;

@@ -164,6 +164,7 @@ static long fb_add(struct drm_file *file, uint32_t handle, uint32_t width, uint3
     fb->height = height;
     fb->pitch  = pitch;
     fb->format = format;
+    fb->closed = false;
     fb->id     = drm_dev.next_fb_id++;
 
     list_add_tail(&fb->node, &drm_dev.fbs);
