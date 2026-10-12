@@ -106,6 +106,24 @@ mutex taken is already queued, so it is woken.
 A parent cannot be freed while a child reads `child->parent`: the parent clears it in
 `exit_notify()` under the same lock, before it dies.
 
+## Processes and threads
+
+A process is a `struct tgroup`: its threads share mm, files and handlers, and `getpid()` is the
+leader's id. `tasklist_lock` covers the group's thread list, its count of live threads, and
+`exiting`.
+
+- A thread (`clone(CLONE_THREAD)`) has no parent and frees itself in `task_dead()`.
+- `live` drops in `task_dead()`, once the thread is off its cpu. At 0 the process is done:
+  the leader orphans its children, then becomes a zombie for its parent, or is freed. A leader
+  that exits first just waits, dead, for that.
+- The children of a process hang on its leader, whichever thread forked them, and any thread
+  waits on the leader's `wait_chldexit`.
+- `task_group_exit()` (`exit_group()`, a fatal signal) marks the group exiting with its code
+  and sends `SIGKILL` to the other threads, under `tasklist_lock`. That code becomes the
+  process's status.
+- Each thread drops its mm on the way out (`exit_mm()`): off its cr3 first, then the put. A
+  zombie holds no address space.
+
 ## Lock-free reads
 
 `select_cpu()` and `balance()` read other runqueues' `nr_running` without a lock. These
@@ -115,7 +133,8 @@ before moving a task.
 ## Lock order
 
 `tasklist_lock`, then `sighand->lock`, then `wait_queue` lock, then rq lock, then the buddy and
-slab locks. Never the other way: no code takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
+slab locks. `timer_lock` and a futex bucket's lock come before a `wait_queue` lock: both wake
+sleepers. A futex bucket's lock also comes before the pmap lock (`mm_read_nofault()`). Never the other way: no code takes a `wait_queue` lock while holding an rq lock. `finish_task_switch()` releases the rq
 lock before it does anything else. `task_free()` calls both allocators, but only after that.
 
 `mm->lock` and the pmap lock are not part of this chain. See [docs/mm/mm.md](../mm/mm.md).

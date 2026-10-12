@@ -50,11 +50,15 @@ static long sys_brk(long brk) {
     return mm_brk(current_task()->mm, brk);
 }
 
-/* TODO: no futexes */
+/* zeroed and futex-woken when this thread exits */
 static long sys_set_tid_address(long tidptr) {
-    (void)tidptr;
-
+    current_task()->clear_child_tid = tidptr;
     return current_task()->id;
+}
+
+static long sys_exit_group(long code) {
+    task_group_exit((code & 0xff) << 8);
+    return 0;
 }
 
 long syscall_dispatch(long nr, const long args[6]) {
@@ -86,10 +90,11 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_ARCH_PRCTL:      return sys_arch_prctl(args[0], args[1]);
         case SYS_GETTID:          return sys_gettid();
         case SYS_TKILL:           return sys_tkill(args[0], args[1]);
+        case SYS_FUTEX:           return sys_futex(args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
         case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
-        case SYS_EXIT_GROUP:      return sys_exit(args[0]); /* no thread groups yet */
+        case SYS_EXIT_GROUP:      return sys_exit_group(args[0]);
         case SYS_TGKILL:          return sys_tgkill(args[0], args[1], args[2]);
         case SYS_OPENAT:          return sys_openat(args[0], args[1], args[2], args[3]);
         case SYS_NEWFSTATAT:      return sys_newfstatat(args[0], args[1], args[2], args[3]);

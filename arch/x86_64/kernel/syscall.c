@@ -32,10 +32,12 @@ void syscall_init(void) {
     wrmsr(IA32_SFMASK, SFMASK_BITS);
 }
 
-/* kill the task instead */
-notrace void syscall_bad_rip(void) {
+/* no frame can be built for a rip like this: the process is killed, whatever it handles */
+notrace void syscall_bad_rip(uintptr_t rip) {
     arch_irq_enable(); /* off for sysret. task_exit() closes the files */
-    task_exit(11); /* TODO: no signals yet */
+
+    printk("signal: task %lu killed by %d -- bad return rip 0x%lx\n", current_task()->id, SIGKILL, rip);
+    task_group_exit(SIGKILL);
 }
 
 /* called from syscall_entry, irq off. nonzero: leave through iretq, sysret would lose rcx and r11 */
@@ -48,7 +50,7 @@ notrace int arch_syscall(struct trapframe *tf) {
     if (tf->rax == SYS_RT_SIGRETURN) {
         if (!signal_restore(tf)) {
             printk("signal: task %lu killed by %d -- a bad sigreturn frame\n", current_task()->id, 11);
-            task_exit(11);
+            task_group_exit(11);
         }
 
         arch_irq_disable();

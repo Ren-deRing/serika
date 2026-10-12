@@ -28,6 +28,7 @@
 #define SYS_ARCH_PRCTL      158
 #define SYS_GETTID          186
 #define SYS_TKILL           200
+#define SYS_FUTEX           202
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_CLOCK_GETTIME   228
 #define SYS_CLOCK_NANOSLEEP 230
@@ -81,3 +82,6 @@ long sys_wait4(long pid, long ustatus, long options, long urusage);
 
 /* fs/exec.c */
 long sys_execve(long upath, long uargv, long uenvp);
+
+/* kernel/futex.c */
+long sys_futex(long uaddr, long op, long val, long utime, long uaddr2, long val3);

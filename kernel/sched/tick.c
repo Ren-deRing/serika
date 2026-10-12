@@ -4,6 +4,7 @@
 #include <serika/intc.h>
 #include <serika/sched.h>
 #include <serika/tick.h>
+#include <serika/timer.h>
 
 #include <asm/arch.h>
 #include <asm/trapframe.h>
@@ -26,6 +27,8 @@ notrace static void tick_handler(struct trapframe *tf, void *data) {
     g_intc->timer_deadline(c->next_deadline);
 
     sched_tick();
+
+    if (c->id == 0) timer_tick();
 
     intc_eoi();
 

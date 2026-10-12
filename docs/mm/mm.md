@@ -13,8 +13,8 @@ way to user mode (`exit_to_user()`), because writing the frame goes through it. 
 cannot sleep, such as the futex fast path under a hash bucket's spinlock, must not use
 `copy_from_user()` and needs an accessor that does not take `mm->lock`.
 
-Threads share one `mm` (`task_create_thread()`, `mm_get()`), and the last `task_free()` drops
-it. Two threads faulting on the same page serialize on `mm->lock`. The second finds it mapped
+Threads share one `mm` (`clone(CLONE_VM)`, `mm_get()`). Each drops its reference when it
+exits (`exit_mm()`, after leaving its cr3), so the last thread's exit frees it. Two threads faulting on the same page serialize on `mm->lock`. The second finds it mapped
 and returns. A fault waits behind a shootdown of the same mm: it sleeps with irq on, so the
 ipi it is waiting for is still taken.
 

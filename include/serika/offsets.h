@@ -46,6 +46,9 @@
 #define TASK_PENDING_OFFSET              0x00118
 #define TASK_SIGINFO_OFFSET              0x00120
 #define TASK_PID_NEXT_OFFSET             0x00720
+#define TASK_GROUP_OFFSET                0x00728
+#define TASK_GROUP_NODE_OFFSET           0x00730
+#define TASK_CLEAR_CHILD_TID_OFFSET      0x00740
 #define PMAP_PM_ROOT_VIRT_OFFSET         0x00000
 #define PMAP_PM_ROOT_PHYS_OFFSET         0x00008
 #define PMAP_LOCK_OFFSET                 0x00010

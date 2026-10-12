@@ -47,3 +47,14 @@ long run_exec(const char *path, long *status) {
     return reaped;
 }
 
+
+/* argv[1] picks how the program behaves */
+long run_exec_mode(const char *path, const char *mode, long *status) {
+    const char *const argv[] = { path, mode, NULL };
+    struct task *t;
+
+    if (task_create_exec(path, argv, NULL, 0, &t) != 0) return 0;
+
+    sched_add_task(t);
+    return reap_within(t, status, 2000);
+}

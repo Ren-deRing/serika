@@ -43,6 +43,7 @@ struct task;
 long reap_within(struct task *t, long *status, uint64_t ms);
 long run_user(const uint8_t *code, size_t size, long *status);
 long run_exec(const char *path, long *status); /* the program's argv and envp are fixed */
+long run_exec_mode(const char *path, const char *mode, long *status);
 
 void test_run_all();
 
@@ -71,6 +72,7 @@ bool test_smp_balance();
 bool test_user_task();
 bool test_user_stack();
 bool test_thread_mm();
+bool test_thread_glibc();
 bool test_fork_glibc();
 
 bool test_wait_sleep();

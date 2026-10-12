@@ -27,6 +27,18 @@ enum task_state {
     TASK_ZOMBIE,
 };
 
+struct task;
+
+struct tgroup {
+    uint32_t     users;     /* tasks pointing at it, atomic */
+    uint64_t     tgid;      /* the leader's id, getpid() */
+    uint32_t     live;      /* threads that have not exited */
+    list_node    threads;   /* the live ones, by group_node */
+    struct task *leader;    /* reaped last: a zombie until live is 0 */
+    bool         exiting;   /* exit_group() or a fatal signal started */
+    long         exit_code; /* then everyone's, and the process's status */
+};
+
 struct task {
     uint64_t vruntime;
     uint64_t id;
@@ -74,6 +86,10 @@ struct task {
     struct ksiginfo   siginfo[NSIG]; /* of each pending signal */
 
     struct task      *pid_next;      /* pid hash. tasklist_lock */
+
+    struct tgroup    *group;         /* NULL for kthreads */
+    list_node         group_node;    /* in group->threads while alive */
+    uintptr_t         clear_child_tid; /* zeroed and futex-woken on exit: pthread_join waits on it */
 };
 
 void switch_to(struct task *prev, struct task *next);
@@ -93,5 +109,8 @@ void task_exit(long code);
 long task_wait(struct task *child, long *status, int options);
 long task_waitpid(long pid, long *status, int options);
 int task_fork(const struct trapframe *tf, struct task **out);
+int task_clone_thread(const struct trapframe *tf, struct task **out);
+void task_group_exit(long code);
+int task_signal_thread(long tgid, long tid, int sig, const struct ksiginfo *info); /* tgid 0: any */
 void task_exec_mm(struct mm *mm);
-int task_signal(long pid, int sig, const struct ksiginfo *info); /* sig 0: is it there */
+int task_signal(long pid, int sig, const struct ksiginfo *info); /* the process. sig 0: is it there */

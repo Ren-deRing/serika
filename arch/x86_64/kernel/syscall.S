@@ -100,4 +100,5 @@ syscall_entry:
     iretq
 
 .Lbad_rip:
+    movq %rcx, %rdi                    /* the rip */
     call syscall_bad_rip               /* never returns. still on the kernel stack */

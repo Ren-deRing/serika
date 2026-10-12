@@ -10,6 +10,13 @@ Linux's numbers, structures and frame, so static glibc's handlers, `raise()`, `a
 - `kill()` finds user tasks by id in a hash under `tasklist_lock`. A task found there is not
   freed until the lock is dropped: `task_free()` takes it out under the same lock.
 
+## Processes
+
+`kill()` is for a process: `group_signal()` picks one of its threads that does not block the
+signal, or the first one, which keeps it pending. `tkill()` and `tgkill()` name a thread. A
+fatal default action ends the whole process (`task_group_exit()`), as Linux does: the other
+threads get `SIGKILL`, and the process's status is the first signal.
+
 ## Delivery
 
 `exit_to_user()` is the one place signals are acted on: the end of every system call and of

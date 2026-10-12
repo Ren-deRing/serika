@@ -73,3 +73,4 @@ uintptr_t mm_brk(struct mm *mm, uintptr_t brk);
 int copy_to_user(uintptr_t to, const void *from, size_t size);
 int copy_from_user(void *to, uintptr_t from, size_t size);
 long strncpy_from_user(char *to, uintptr_t from, size_t max); /* length, nul not counted */
+int mm_read_nofault(struct mm *mm, uintptr_t addr, uint32_t *val);

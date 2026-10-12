@@ -3,6 +3,7 @@
 #include <serika/compiler.h>
 #include <serika/cpu.h>
 #include <serika/errno.h>
+#include <serika/futex.h>
 #include <serika/mm.h>
 #include <serika/page.h>
 #include <serika/panic.h>
@@ -105,20 +106,76 @@ static void user_task_discard(struct task *task) {
     kfree(task);
 }
 
-/* takes mm, files and sighand. the creator reaps it, kill() finds it */
-static void user_task_attach(struct task *task, struct mm *mm, struct files *files, struct sighand *sighand) {
+/* a process of its own, led by leader */
+static struct tgroup *tgroup_alloc(struct task *leader) {
+    struct tgroup *g = kmalloc(sizeof(struct tgroup));
+    if (!g) return NULL;
+
+    *g = (struct tgroup){ .users = 1, .tgid = leader->id, .live = 1, .leader = leader };
+    list_init(&g->threads);
+
+    return g;
+}
+
+/* tasklist_lock held */
+static void pid_hash_add(struct task *task) {
+    task->pid_next = pid_hash[task->id % PID_HASH];
+    pid_hash[task->id % PID_HASH] = task;
+}
+
+/* a new process: takes mm, files, sighand and g. a child of the caller's process, which reaps it */
+static void user_task_attach(struct task *task, struct tgroup *g, struct mm *mm, struct files *files,
+                             struct sighand *sighand) {
+    struct task *curr = current_task();
+
+    task->mm = mm;
+    task->pmap = mm->pmap;
+    task->files = files;
+    task->sighand = sighand;
+    task->group = g;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    /* forked by any thread, it is the process's: the leader holds the children */
+    task->parent = curr->group ? curr->group->leader : curr;
+    list_add_tail(&task->sibling, &task->parent->children);
+
+    list_add_tail(&task->group_node, &g->threads);
+    pid_hash_add(task);
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+}
+
+/* a thread of g's process: takes mm, files and sighand. nobody reaps it, it frees itself. false once the process is going */
+static bool thread_attach(struct task *task, struct tgroup *g, struct mm *mm, struct files *files,
+                          struct sighand *sighand) {
     task->mm = mm;
     task->pmap = mm->pmap;
     task->files = files;
     task->sighand = sighand;
 
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
-    task->parent = current_task();
-    list_add_tail(&task->sibling, &task->parent->children);
 
-    task->pid_next = pid_hash[task->id % PID_HASH];
-    pid_hash[task->id % PID_HASH] = task;
+    bool ok = !g->exiting && g->live;
+
+    if (ok) {
+        __atomic_add_fetch(&g->users, 1, 0); /* __ATOMIC_RELAXED */
+        g->live++;
+
+        task->group = g;
+        list_add_tail(&task->group_node, &g->threads);
+        pid_hash_add(task);
+    }
+
     spin_unlock_irqrestore(&tasklist_lock, f);
+
+    if (!ok) {
+        task->mm = NULL;
+        task->files = NULL;
+        task->sighand = NULL;
+    }
+
+    return ok;
 }
 
 /* not runnable until sched_add_task(). takes mm, files and sighand on success, the caller still owns them on failure */
@@ -127,12 +184,15 @@ struct task *task_create_mm(struct mm *mm, struct files *files, struct sighand *
     struct task *task = user_task_alloc(entry, nice);
     if (!task) return NULL;
 
-    if (arch_task_init(task, user_stack) == -1) {
+    struct tgroup *g = tgroup_alloc(task);
+
+    if (!g || arch_task_init(task, user_stack) == -1) {
+        kfree(g);
         user_task_discard(task);
         return NULL;
     }
 
-    user_task_attach(task, mm, files, sighand);
+    user_task_attach(task, g, mm, files, sighand);
     return task;
 }
 
@@ -146,18 +206,20 @@ int task_fork(const struct trapframe *tf, struct task **out) {
     struct mm *mm = mm_fork(curr->mm);
     struct files *files = files_copy(curr->files);
     struct sighand *sighand = sighand_copy(curr->sighand);
+    struct tgroup *g = tgroup_alloc(task);
 
-    if (!mm || !files || !sighand || arch_fork_init(task, tf) == -1) {
+    if (!mm || !files || !sighand || !g || arch_fork_init(task, tf) == -1) {
         if (mm) mm_put(mm);
         if (files) files_put(files);
         if (sighand) sighand_put(sighand);
+        kfree(g);
         user_task_discard(task);
         return -ENOMEM;
     }
 
     task->blocked = curr->blocked;
 
-    user_task_attach(task, mm, files, sighand);
+    user_task_attach(task, g, mm, files, sighand);
 
     *out = task;
     return 0;
@@ -204,22 +266,61 @@ fail:
     return NULL;
 }
 
-/* not runnable until sched_add_task(). shares proc's mm, user_stack is in a vma the caller mapped */
+/* not runnable until sched_add_task(). a thread of proc's process, user_stack in a vma the caller mapped */
 struct task *task_create_thread(struct task *proc, uintptr_t entry, uintptr_t user_stack, int nice) {
-    if (!proc->mm) return NULL;
+    if (!proc->group) return NULL;
+
+    struct task *task = user_task_alloc(entry, nice);
+    if (!task) return NULL;
+
+    if (arch_task_init(task, user_stack) == -1) {
+        user_task_discard(task);
+        return NULL;
+    }
 
     mm_get(proc->mm);
     files_get(proc->files);
     sighand_get(proc->sighand);
 
-    struct task *task = task_create_mm(proc->mm, proc->files, proc->sighand, entry, user_stack, nice);
-    if (!task) {
+    if (!thread_attach(task, proc->group, proc->mm, proc->files, proc->sighand)) {
         mm_put(proc->mm);
         files_put(proc->files);
         sighand_put(proc->sighand);
+        user_task_discard(task);
+        return NULL;
     }
 
     return task;
+}
+
+/* clone with CLONE_THREAD: the caller's process gets another thread, back from the same system call with 0 */
+int task_clone_thread(const struct trapframe *tf, struct task **out) {
+    struct task *curr = current_task();
+
+    struct task *task = user_task_alloc(0, curr->nice);
+    if (!task) return -ENOMEM;
+
+    if (arch_fork_init(task, tf) == -1) {
+        user_task_discard(task);
+        return -ENOMEM;
+    }
+
+    mm_get(curr->mm);
+    files_get(curr->files);
+    sighand_get(curr->sighand);
+
+    task->blocked = curr->blocked;
+
+    if (!thread_attach(task, curr->group, curr->mm, curr->files, curr->sighand)) {
+        mm_put(curr->mm);
+        files_put(curr->files);
+        sighand_put(curr->sighand);
+        user_task_discard(task);
+        return -EAGAIN;
+    }
+
+    *out = task;
+    return 0;
 }
 
 struct task *task_create_boot(void) {
@@ -247,6 +348,7 @@ void task_free(struct task *task) {
 
     if (task->mm) mm_put(task->mm);
     if (task->files) files_put(task->files);
+    if (task->group && __atomic_sub_fetch(&task->group->users, 1, 4) == 0) kfree(task->group); /* __ATOMIC_ACQ_REL */
 
     if (task->kstack) free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
 
@@ -269,39 +371,70 @@ notrace void task_start_user(void) {
     arch_user_gs_init();
 }
 
-/* finish_task_switch(), after the rq lock is dropped */
-void task_dead(struct task *task) {
-    uint64_t f = spin_lock_irqsave(&tasklist_lock);
-
-    struct task *parent = task->parent;
-
-    if (parent) {
-        struct ksiginfo info = { .signo = SIGCHLD, .code = CLD_EXITED, .pid = task->id };
-
-        task->state = TASK_ZOMBIE;
-        wake_up(&parent->wait_chldexit);
-        send_signal(parent, SIGCHLD, &info); /* a kthread parent takes none */
-    }
-
-    spin_unlock_irqrestore(&tasklist_lock, f);
-
-    if (!parent) task_free(task);
-}
-
-/* children lose their parent. */
-static void exit_notify(struct task *curr) {
-    list_node zombies;
-    list_init(&zombies);
-
-    uint64_t f = spin_lock_irqsave(&tasklist_lock);
-
-    while (!list_empty(&curr->children)) {
-        struct task *child = list_first(&curr->children, struct task, sibling);
+/* tasklist_lock held. its children go to no one: zombies among them, done, go on zombies to be freed */
+static void orphan_children(struct task *task, list_node *zombies) {
+    while (!list_empty(&task->children)) {
+        struct task *child = list_first(&task->children, struct task, sibling);
 
         list_del(&child->sibling);
         child->parent = NULL;
 
-        if (child->state == TASK_ZOMBIE) list_add_tail(&child->sibling, &zombies);
+        /* a leader whose threads still run is freed by the last of them */
+        if (child->state == TASK_ZOMBIE) list_add_tail(&child->sibling, zombies);
+    }
+}
+
+/* tasklist_lock held. one thread of the process, the one least in the way of sig */
+static int group_signal(struct task *t, int sig, const struct ksiginfo *info) {
+    struct tgroup *g = t->group;
+    if (!g) return send_signal(t, sig, info);
+
+    struct task *target = NULL;
+
+    for (list_node *n = g->threads.next; n != &g->threads; n = n->next) {
+        struct task *th = container_of(n, struct task, group_node);
+
+        if (!target) target = th; /* all of them block it: it waits on the first */
+        if (!(__atomic_load_n(&th->blocked, 0) & sigmask(sig))) { /* __ATOMIC_RELAXED */
+            target = th;
+            break;
+        }
+    }
+
+    return target ? send_signal(target, sig, info) : 0; /* no thread left: like a zombie, nothing to do */
+}
+
+/* finish_task_switch(), after the rq lock is dropped. when a process's last thread is off its cpu, the process is done */
+void task_dead(struct task *task) {
+    struct tgroup *g = task->group;
+    struct task *leader = g ? g->leader : task;
+
+    list_node zombies;
+    list_init(&zombies);
+
+    bool done = true, free_leader = false;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    if (g) {
+        list_del(&task->group_node);
+        done = --g->live == 0;
+    }
+
+    if (done) {
+        orphan_children(leader, &zombies);
+
+        if (g && g->exiting) leader->exit_code = g->exit_code;
+
+        if (leader->parent) {
+            struct ksiginfo info = { .signo = SIGCHLD, .code = CLD_EXITED, .pid = leader->id };
+
+            leader->state = TASK_ZOMBIE;
+            wake_up(&leader->parent->wait_chldexit);
+            group_signal(leader->parent, SIGCHLD, &info); /* a kthread parent takes none */
+        } else {
+            free_leader = true;
+        }
     }
 
     spin_unlock_irqrestore(&tasklist_lock, f);
@@ -312,6 +445,10 @@ static void exit_notify(struct task *curr) {
         list_del(&child->sibling);
         task_free(child);
     }
+
+    /* a thread frees itself. a leader stays for its parent, or until its process is done */
+    if (task != leader) task_free(task);
+    if (free_leader) task_free(leader);
 }
 
 /* 0: not exited yet, -ECHILD: no such child */
@@ -345,15 +482,16 @@ static long reap_child(struct task *curr, long pid, long *status) {
     return id;
 }
 
-/* pid -1: any child */
+/* pid -1: any child. the children are the process's, on its leader */
 long task_waitpid(long pid, long *status, int options) {
     struct task *curr = current_task();
+    struct task *leader = curr->group ? curr->group->leader : curr;
     long ret;
 
-    if (options & WNOHANG) return reap_child(curr, pid, status);
+    if (options & WNOHANG) return reap_child(leader, pid, status);
 
     /* a signal ends the wait: -ERESTARTSYS, which the way back to user turns into a restart or -EINTR */
-    int err = wait_event_interruptible(curr->wait_chldexit, (ret = reap_child(curr, pid, status)) != 0);
+    int err = wait_event_interruptible(leader->wait_chldexit, (ret = reap_child(leader, pid, status)) != 0);
     return err ? err : ret;
 }
 
@@ -362,24 +500,70 @@ long task_wait(struct task *child, long *status, int options) {
     return task_waitpid(child ? (long)child->id : -1, status, options);
 }
 
+/* tasklist_lock held */
+static struct task *pid_find(long id) {
+    for (struct task *t = pid_hash[id % PID_HASH]; t; t = t->pid_next)
+        if ((long)t->id == id) return t;
+
+    return NULL;
+}
+
+/* kill(): the process pid leads */
 int task_signal(long pid, int sig, const struct ksiginfo *info) {
     int err = -ESRCH;
 
     uint64_t f = spin_lock_irqsave(&tasklist_lock);
 
-    for (struct task *t = pid_hash[pid % PID_HASH]; t; t = t->pid_next) {
-        if ((long)t->id == pid) {
-            err = sig ? send_signal(t, sig, info) : 0;
-            break;
-        }
-    }
+    struct task *t = pid_find(pid);
+    if (t && (!t->group || t->group->tgid == (uint64_t)pid)) err = sig ? group_signal(t, sig, info) : 0;
 
     spin_unlock_irqrestore(&tasklist_lock, f);
     return err;
 }
 
+/* tkill(), tgkill(): that thread */
+int task_signal_thread(long tgid, long tid, int sig, const struct ksiginfo *info) {
+    int err = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = pid_find(tid);
+    if (t && (!tgid || (t->group && t->group->tgid == (uint64_t)tgid))) err = sig ? send_signal(t, sig, info) : 0;
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return err;
+}
+
+/* off the mm before the end: a zombie holds no address space. the last thread's put frees it */
+static void exit_mm(struct task *curr) {
+    struct mm *mm = curr->mm;
+    if (!mm) return;
+
+    interrupt_status_t flags = arch_irq_save();
+
+    pmap_switch(curr->pmap, pmap_kernel());
+    curr->mm = NULL;
+    curr->pmap = pmap_kernel();
+    pmap_activate(pmap_kernel());
+
+    arch_irq_restore(flags);
+
+    mm_put(mm);
+}
+
+/* this thread only. the process ends with its last thread */
 void task_exit(long code) {
     struct task *curr = current_task();
+
+    /* pthread_join() sleeps on this word */
+    if (curr->clear_child_tid) {
+        uint32_t zero = 0;
+
+        if (copy_to_user(curr->clear_child_tid, &zero, sizeof(zero)) == 0)
+            futex_wake(curr->mm, curr->clear_child_tid, 1);
+
+        curr->clear_child_tid = 0;
+    }
 
     /* while we still run: task_free() may come from finish_task_switch(), irq off */
     if (curr->files) {
@@ -387,7 +571,7 @@ void task_exit(long code) {
         curr->files = NULL;
     }
 
-    exit_notify(curr);
+    exit_mm(curr);
 
     arch_irq_disable();
 
@@ -396,4 +580,32 @@ void task_exit(long code) {
     schedule();
 
     panic("sched: dead task got scheduled -- how?");
+}
+
+/* exit_group(), or a fatal signal: every thread goes, and code is the process's status */
+void task_group_exit(long code) {
+    struct task *curr = current_task();
+    struct tgroup *g = curr->group;
+
+    if (g) {
+        uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+        if (g->exiting) {
+            code = g->exit_code;
+        } else {
+            struct ksiginfo info = { .signo = SIGKILL, .code = SI_KERNEL };
+
+            g->exiting = true;
+            g->exit_code = code;
+
+            for (list_node *n = g->threads.next; n != &g->threads; n = n->next) {
+                struct task *th = container_of(n, struct task, group_node);
+                if (th != curr) send_signal(th, SIGKILL, &info);
+            }
+        }
+
+        spin_unlock_irqrestore(&tasklist_lock, f);
+    }
+
+    task_exit(code);
 }

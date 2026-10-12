@@ -25,22 +25,31 @@
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID   0x01000000
 
-/* what shares with the caller, and needs threads: not yet */
-#define CLONE_SHARING (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_VFORK | CLONE_PARENT | CLONE_THREAD)
+/* a thread shares all of these. no cwd yet: CLONE_FS has nothing to share */
+#define CLONE_THREAD_NEEDS (CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD)
+
+/* sharing without being a thread, and vfork's wait: not yet */
+#define CLONE_UNSUPPORTED (CLONE_VFORK | CLONE_PARENT)
 
 /* x86_64's order: flags, stack, parent_tid, child_tid, tls. glibc's fork() comes here too */
 long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
     struct task *curr = current_task();
     struct task *child;
 
-    if ((flags & CLONE_SHARING) || ((flags & CSIGNAL) && (flags & CSIGNAL) != SIGCHLD)) {
+    bool thread = flags & CLONE_THREAD;
+
+    /* a thread: all of it shared, no exit signal, its own stack. a process: none of it shared */
+    bool ok = thread ? (flags & CLONE_THREAD_NEEDS) == CLONE_THREAD_NEEDS && !(flags & CSIGNAL) && newsp
+                     : !(flags & CLONE_THREAD_NEEDS) && (!(flags & CSIGNAL) || (flags & CSIGNAL) == SIGCHLD);
+
+    if (!ok || (flags & CLONE_UNSUPPORTED)) {
         printk("syscall: clone flags 0x%lx not supported -- task %lu\n", flags, curr->id);
         return -EINVAL;
     }
 
     if ((flags & CLONE_SETTLS) && (uint64_t)tls >= USER_SPACE_END) return -EPERM;
 
-    int err = task_fork(curr->tf, &child);
+    int err = thread ? task_clone_thread(curr->tf, &child) : task_fork(curr->tf, &child);
     if (err) return err;
 
     if (newsp) child->tf->rsp = newsp;
@@ -48,11 +57,12 @@ long sys_clone(long flags, long newsp, long ptid, long ctid, long tls) {
 
     int32_t pid = child->id;
 
-    /* in the child's memory: its copy of the page, before it runs */
+    /* in the child's memory, which a thread shares with us: before it runs */
     if (flags & CLONE_CHILD_SETTID) mm_write(child->mm, ctid, &pid, sizeof(pid));
     if (flags & CLONE_PARENT_SETTID) copy_to_user(ptid, &pid, sizeof(pid));
 
-    /* CLONE_CHILD_CLEARTID is for threads joining: a forked child has no one to wake */
+    /* zeroed and woken when it exits: pthread_join() */
+    if (flags & CLONE_CHILD_CLEARTID) child->clear_child_tid = ctid;
 
     sched_add_task(child);
     return pid;

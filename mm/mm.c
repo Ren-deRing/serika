@@ -266,6 +266,18 @@ int copy_from_user(void *to, uintptr_t from, size_t size) {
     return mm_access(current_task()->mm, from, to, size, false, PROT_READ);
 }
 
+/* without sleeping, for code under a spinlock: a word already in memory. -EFAULT if it is not
+   there yet: copy_from_user() brings it, then try again */
+int mm_read_nofault(struct mm *mm, uintptr_t addr, uint32_t *val) {
+    if (addr & 3) return -EINVAL;
+
+    uintptr_t phys = pmap_extract(mm->pmap, addr);
+    if (!phys) return -EFAULT;
+
+    *val = __atomic_load_n((uint32_t *)P2V(phys), 0); /* __ATOMIC_RELAXED */
+    return 0;
+}
+
 /* page by page: nothing past the nul's page is touched. -ENAMETOOLONG if max has no nul */
 long strncpy_from_user(char *to, uintptr_t from, size_t max) {
     size_t done = 0;

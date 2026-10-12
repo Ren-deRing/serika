@@ -1,5 +1,6 @@
 #include <serika/arch.h>
 #include <serika/cpu.h>
+#include <serika/errno.h>
 #include <serika/mm.h>
 #include <serika/sched.h>
 #include <serika/syscall.h>
@@ -43,22 +44,34 @@ bool test_thread_mm() {
     TEST_ASSERT(thread);
     TEST_ASSERT(thread->mm == proc->mm);
 
+    long tid = thread->id;
+
     sched_add_task(proc);
     sched_add_task(thread);
 
-    long proc_status = 0, thread_status = 0;
-    long proc_id = 0, thread_id = 0;
-    uint64_t until = rdtsc() + curcpu->tsc_freq_hz * 2; /* 2s */
+    /* the process is reaped once both threads are gone. a thread is nobody's child: it frees itself */
+    long status = 0;
 
-    while ((!proc_id || !thread_id) && rdtsc() < until) {
-        if (!proc_id)   proc_id = task_wait(proc, &proc_status, WNOHANG);
-        if (!thread_id) thread_id = task_wait(thread, &thread_status, WNOHANG);
-        arch_pause();
-    }
-
-    TEST_ASSERT(proc_id > 0 && thread_id > 0);
-    TEST_ASSERT(WEXITSTATUS(proc_status) == 0x5e);
-    TEST_ASSERT(WEXITSTATUS(thread_status) == 0);
+    TEST_ASSERT(reap_within(proc, &status, 2000) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    TEST_ASSERT(task_waitpid(tid, NULL, WNOHANG) == -ECHILD);
     return true;
 }
 
+
+/* pthreads through glibc: clone threads, futexes, tls, and how a threaded process ends */
+bool test_thread_glibc() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/threads", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+
+    /* exit() in one thread ends one blocked in a futex too */
+    TEST_ASSERT(run_exec_mode("/bin/threads", "exitgroup", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x42);
+
+    /* the main thread leaves first, the process ends with the last one */
+    TEST_ASSERT(run_exec_mode("/bin/threads", "leaderexit", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

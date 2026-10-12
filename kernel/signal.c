@@ -245,7 +245,8 @@ long sys_rt_sigpending(long uset, long sigsetsize) {
 }
 
 long sys_getpid(void) {
-    return current_task()->id; /* no thread groups: a process is a task */
+    struct task *curr = current_task();
+    return curr->group ? (long)curr->group->tgid : (long)curr->id;
 }
 
 long sys_gettid(void) {
@@ -253,7 +254,7 @@ long sys_gettid(void) {
 }
 
 static long kill_one(long pid, long sig, int code) {
-    struct ksiginfo info = { .signo = sig, .code = code, .pid = current_task()->id };
+    struct ksiginfo info = { .signo = sig, .code = code, .pid = sys_getpid() };
 
     if (sig < 0 || sig > NSIG) return -EINVAL;
 
@@ -269,15 +270,20 @@ long sys_kill(long pid, long sig) {
     return kill_one(pid, sig, SI_USER);
 }
 
+/* that thread, wherever its process is */
 long sys_tkill(long tid, long sig) {
-    if (tid <= 0) return -EINVAL;
+    struct ksiginfo info = { .signo = sig, .code = SI_TKILL, .pid = sys_getpid() };
 
-    return kill_one(tid, sig, SI_TKILL);
+    if (tid <= 0 || sig < 0 || sig > NSIG) return -EINVAL;
+
+    return task_signal_thread(0, tid, sig, &info);
 }
 
-/* no thread groups: tgid is the task itself, not checked */
+/* that thread, if it is in process tgid */
 long sys_tgkill(long tgid, long tid, long sig) {
-    if (tgid <= 0 || tid <= 0) return -EINVAL;
+    struct ksiginfo info = { .signo = sig, .code = SI_TKILL, .pid = sys_getpid() };
 
-    return kill_one(tid, sig, SI_TKILL);
+    if (tgid <= 0 || tid <= 0 || sig < 0 || sig > NSIG) return -EINVAL;
+
+    return task_signal_thread(tgid, tid, sig, &info);
 }

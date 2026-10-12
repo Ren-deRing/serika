@@ -1,9 +1,14 @@
 #include <serika/cpu.h>
 #include <serika/errno.h>
+#include <serika/list.h>
+#include <serika/lock.h>
 #include <serika/mm.h>
+#include <serika/preempt.h>
 #include <serika/sched.h>
 #include <serika/signal.h>
 #include <serika/syscall.h>
+#include <serika/timer.h>
+#include <serika/wait.h>
 
 #include <asm/arch.h>
 
@@ -60,14 +65,80 @@ long sys_clock_gettime(long clk, long utp) {
     return copy_to_user(utp, &ts, sizeof(ts));
 }
 
-/* TODO: no timers. a signal ends it early: -EINTR */
-static long sleep_until(uint64_t deadline) {
-    while (rdtsc() < deadline) {
-        if (signal_pending(current_task())) return -EINTR;
-        schedule();
+/* sorted by expiry. timer_lock, then a wait_queue lock, then an rq lock: fn wakes someone */
+static spinlock_t timer_lock = SPINLOCK_INITIALIZER;
+static list_node  timers = LIST_HEAD_INIT(timers);
+
+void timer_add(struct timer *t) {
+    uint64_t flags = spin_lock_irqsave(&timer_lock);
+
+    list_node *at = &timers;
+    while (at->next != &timers && container_of(at->next, struct timer, node)->expires <= t->expires) at = at->next;
+
+    __list_add(&t->node, at, at->next);
+    t->queued = true;
+
+    spin_unlock_irqrestore(&timer_lock, flags);
+}
+
+bool timer_del(struct timer *t) {
+    uint64_t flags = spin_lock_irqsave(&timer_lock);
+
+    bool pending = t->queued;
+    if (pending) list_del(&t->node);
+    t->queued = false;
+
+    spin_unlock_irqrestore(&timer_lock, flags);
+    return pending;
+}
+
+/* in the tick: irq off, one cpu only so the list is not fought over */
+void timer_tick(void) {
+    if (list_empty(&timers)) return; /* a hint. the next tick looks again */
+
+    uint64_t now = rdtsc();
+
+    spin_lock(&timer_lock);
+
+    while (!list_empty(&timers)) {
+        struct timer *t = list_first(&timers, struct timer, node);
+        if (t->expires > now) break;
+
+        list_del(&t->node);
+        t->queued = false;
+        t->fn(t);
     }
 
-    return 0;
+    spin_unlock(&timer_lock);
+}
+
+struct sleeper {
+    struct timer      timer;
+    struct wait_queue wq;
+    volatile bool     done;
+};
+
+static void sleeper_fire(struct timer *t) {
+    struct sleeper *s = container_of(t, struct sleeper, timer);
+
+    s->done = true;
+    wake_up(&s->wq);
+}
+
+long sleep_until(uint64_t deadline) {
+    struct sleeper s = { .timer = { .expires = deadline, .fn = sleeper_fire } };
+
+    if (rdtsc() >= deadline) return 0;
+
+    wait_queue_init(&s.wq);
+    timer_add(&s.timer);
+
+    int err = wait_event_interruptible(s.wq, s.done);
+
+    /* after this the tick no longer has s */
+    timer_del(&s.timer);
+
+    return err ? -EINTR : 0;
 }
 
 /* what is left of it, for rem */
@@ -83,7 +154,7 @@ static int put_left(long urem, uint64_t deadline) {
     return copy_to_user(urem, &ts, sizeof(ts));
 }
 
-static int timespec_to_tsc(long uts, uint64_t *tsc) {
+int timespec_to_tsc(long uts, uint64_t *tsc) {
     struct timespec ts;
     uint64_t freq = this_cpu_read(tsc_freq_hz);
 

@@ -211,14 +211,19 @@ bool signal_restore(struct trapframe *tf) {
 
 /* the default action, or a frame that could not be built */
 static void signal_kill(int sig, const struct ksiginfo *info, struct trapframe *tf) {
+    struct tgroup *g = current_task()->group;
+
     arch_irq_enable(); /* task_exit() closes the files */
 
-    if (fault_signal(sig) && info->addr)
+    /* the others of an exiting process get SIGKILL: only the first death is news */
+    if (g && g->exiting)
+        ;
+    else if (fault_signal(sig) && info->addr)
         printk("signal: task %lu killed by %d -- addr 0x%lx, rip 0x%lx\n", current_task()->id, sig, info->addr, tf->rip);
     else
         printk("signal: task %lu killed by %d -- rip 0x%lx\n", current_task()->id, sig, tf->rip);
 
-    task_exit(sig);
+    task_group_exit(sig);
 }
 
 /* irq off, the last stop before user mode, from a syscall or an interrupt */
