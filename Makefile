@@ -176,7 +176,8 @@ run: build
 		-m 256M \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-bios /usr/share/OVMF/OVMF_CODE.fd \
-		-serial stdio \
+		-chardev stdio,id=ser0,signal=off \
+		-serial chardev:ser0 \
 		-no-reboot \
 		-smp 4 \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
