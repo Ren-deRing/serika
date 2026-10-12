@@ -1,6 +1,7 @@
 #include <serika/buddy.h>
 #include <serika/errno.h>
 #include <serika/list.h>
+#include <serika/mm.h>
 #include <serika/page.h>
 #include <serika/slab.h>
 #include <serika/stat.h>
@@ -54,6 +55,10 @@ static struct inode *ramfs_new(uint32_t mode, struct inode *parent) {
     inode->nlink = S_ISDIR(mode) ? 2 : 1;
 
     return inode;
+}
+
+struct inode *ramfs_anon_file(void) {
+    return ramfs_new(S_IFREG | 0600, NULL);
 }
 
 struct inode *ramfs_root(void) {
@@ -272,6 +277,7 @@ static long ramfs_write(struct inode *inode, const void *buf, size_t n, uint64_t
             if (!phys) break;
 
             memset((void *)P2V(phys), 0, PAGE_SIZE);
+            frame_init(phys);
             node->pages[idx] = phys;
         }
 
@@ -284,12 +290,32 @@ static long ramfs_write(struct inode *inode, const void *buf, size_t n, uint64_t
     return done ? (long)done : -ENOMEM;
 }
 
+/* the page of the file at index for a mapping: a hole is filled with zeros. the mapping's reference is taken */
+static uintptr_t ramfs_getpage(struct inode *inode, uint64_t index) {
+    struct ramfs_node *node = node_of(inode);
+
+    if (index >= ALIGN_UP(inode->size, PAGE_SIZE) >> PAGE_SHIFT) return 0;
+    if (ramfs_grow(node, index + 1) != 0) return 0;
+
+    if (!node->pages[index]) {
+        uintptr_t phys = (uintptr_t)alloc_pages(0);
+        if (!phys) return 0;
+
+        memset((void *)P2V(phys), 0, PAGE_SIZE);
+        frame_init(phys);
+        node->pages[index] = phys;
+    }
+
+    frame_get(node->pages[index]);
+    return node->pages[index];
+}
+
 static int ramfs_truncate(struct inode *inode, uint64_t size) {
     struct ramfs_node *node = node_of(inode);
 
     /* pages past the end go, the tail of the last one is zeroed for a later grow */
     for (size_t i = ALIGN_UP(size, PAGE_SIZE) >> PAGE_SHIFT; i < node->npages; i++) {
-        free_pages((void *)node->pages[i], 0);
+        if (node->pages[i]) frame_put(node->pages[i]); /* a mapping of it keeps it until it goes */
         node->pages[i] = 0;
     }
 
@@ -339,7 +365,8 @@ static long ramfs_getdents(struct inode *dir, void *buf, size_t n, uint64_t *pos
 static void ramfs_evict(struct inode *inode) {
     struct ramfs_node *node = node_of(inode);
 
-    for (size_t i = 0; i < node->npages; i++) free_pages((void *)node->pages[i], 0);
+    for (size_t i = 0; i < node->npages; i++)
+        if (node->pages[i]) frame_put(node->pages[i]);
     ramfs_free_slots(node);
     kfree(node->target);
 
@@ -367,6 +394,7 @@ static const struct inode_ops ramfs_ops = {
     .read       = ramfs_read,
     .write      = ramfs_write,
     .truncate   = ramfs_truncate,
+    .getpage    = ramfs_getpage,
     .getdents   = ramfs_getdents,
     .evict      = ramfs_evict,
 };

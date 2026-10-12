@@ -34,6 +34,7 @@ void vfs_init(void) {
         if (vfs_link_inode(names[i], console_inode) != 0) panic("vfs: unable to create %s -- out of memory?", names[i]);
 
     mem_devices_create();
+    fb_devices_create();
 }
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
@@ -662,6 +663,17 @@ int vfs_utimes(struct inode *inode, int64_t atime_ns, int64_t mtime_ns) {
 
     mutex_unlock(&inode->lock);
     return 0;
+}
+
+/* mm->lock is held and the inode lock is taken: the order a file fault has always had */
+uintptr_t vfs_getpage(struct inode *inode, uint64_t index) {
+    if (!inode->ops->getpage) return 0;
+
+    mutex_lock(&inode->lock);
+    uintptr_t phys = inode->ops->getpage(inode, index);
+    mutex_unlock(&inode->lock);
+
+    return phys;
 }
 
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {

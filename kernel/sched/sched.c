@@ -271,6 +271,21 @@ void sched_kick(struct task *t) {
     if (kick) intc_send_ipi(cpus[rq->cpu].hw_id, RESCHED_VECTOR);
 }
 
+/* its weight changes, and with it the load of the rq it is on: queued, or running */
+void sched_set_nice(struct task *t, int nice) {
+    uint64_t flags;
+    struct runqueue *rq = task_rq_lock(t, &flags);
+
+    uint32_t weight = sched_prio_to_weight[nice + 20];
+
+    if (t->on_rq) rq->load += weight - t->weight;
+
+    t->nice   = nice;
+    t->weight = weight;
+
+    spin_unlock_irqrestore(&rq->lock, flags);
+}
+
 /* a sleeper gets half a latency of credit at most */
 static void place_wakeup(struct runqueue *rq, struct task *t) {
     uint64_t credit = us_to_tsc(SCHED_LATENCY_US) / 2;

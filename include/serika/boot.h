@@ -26,6 +26,9 @@ struct framebuffer {
     uint32_t height;
     uint32_t pitch;
     uint32_t bpp;
+    uint8_t  red_shift, red_size;     /* where each color sits in a pixel */
+    uint8_t  green_shift, green_size;
+    uint8_t  blue_shift, blue_size;
 };
 
 struct core {

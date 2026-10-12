@@ -53,3 +53,19 @@ bool test_exec_syscalls() {
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }
+
+/* mesa's llvmpipe: llvm compiles the shaders and the rasterizer runs on threads, on a context with no display */
+bool test_exec_gl() {
+    const char *const argv[] = { "/bin/gltest", NULL };
+    const char *const envp[] = { "LIBGL_ALWAYS_SOFTWARE=1", "EGL_PLATFORM=surfaceless", "HOME=/tmp",
+                                 "MESA_SHADER_CACHE_DISABLE=true", "LP_NUM_THREADS=2", NULL };
+    struct task *t;
+    long status = 0;
+
+    TEST_ASSERT(task_create_exec("/bin/gltest", argv, envp, 0, &t) == 0);
+    sched_add_task(t);
+
+    TEST_ASSERT(reap_within(t, &status, 120000) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

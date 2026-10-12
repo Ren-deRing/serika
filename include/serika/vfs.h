@@ -21,6 +21,8 @@ struct inode_ops {
     long (*readlink)(struct inode *inode, char *buf, size_t n); /* the target, up to n, no nul. its length */
     int  (*link)(struct inode *dir, const char *name, size_t len, struct inode *inode); /* a name for an inode that exists */
     int  (*unlink)(struct inode *dir, const char *name, size_t len, struct inode *inode); /* the name, if it still is inode's. its reference is the caller's to drop */
+    uintptr_t (*getpage)(struct inode *inode, uint64_t index); /* a mapped file's page, a frame with a reference taken. 0: past the end */
+    bool map_wc; /* its pages are mapped write-combining: a framebuffer */
     int  (*dir_retire)(struct inode *dir); /* empty: nothing can be put in it again. -ENOTEMPTY */
     long (*read)(struct inode *inode, void *buf, size_t n, uint64_t pos);
     long (*write)(struct inode *inode, const void *buf, size_t n, uint64_t pos);
@@ -124,8 +126,11 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 struct inode *ramfs_root(void);
+struct inode *ramfs_anon_file(void); /* a file with no name: memfd, shared anonymous memory */
+uintptr_t vfs_getpage(struct inode *inode, uint64_t index);
 struct inode *console_create(void);
 void mem_devices_create(void);
+void fb_devices_create(void); /* /dev/fb0, if the boot gave a framebuffer */
 int pipe_create(struct file *out[2], uint32_t flags); /* read end, write end. flags: O_NONBLOCK */
 struct inode *fifo_create(uint32_t mode);              /* a named pipe: link it somewhere */
 void initramfs_unpack(void);

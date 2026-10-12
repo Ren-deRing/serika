@@ -82,6 +82,18 @@ cpu may be walking them until the shootdown, so they wait for `mm_put()`.
 A shrinking `brk()` goes the same way: the pages past the new break are unmapped and freed,
 so growing again faults in zeroed pages, which malloc counts on.
 
+## Shared mappings
+
+`MAP_SHARED` of a file is the file's own pages: the vma has `shared` set, and a fault asks the inode for the
+page (`getpage`, called with `mm->lock` held and taking the inode lock, the order a file fault has always had).
+ramfs hands out its frames with a reference taken, so a frame is the file's and each mapping's, and `ftruncate` or
+the last close can not free one that is still mapped (`frame_init()`, `frame_get()`, `frame_put()`). Nothing is
+copied: a write goes straight into the page, `fork` maps the same frames in the child with the same rights (a
+private mapping is made read only on both sides instead), and a read only entry that a write finds in a writable
+vma just gets its right back. A page past the end of the file does not map (`SIGSEGV`; linux sends `SIGBUS`).
+`MAP_SHARED | MAP_ANONYMOUS` and `memfd_create()` are files with no name (`ramfs_anon_file()`). `mremap`
+keeps `shared`.
+
 ## Related
 
 - [docs/sched/locking.md](../sched/locking.md): the rq and wait_queue chain

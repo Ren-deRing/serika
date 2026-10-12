@@ -15,12 +15,16 @@ static struct page *frame(uintptr_t phys) {
 }
 
 /* one more user pmap maps it */
-static void frame_get(uintptr_t phys) {
+void frame_init(uintptr_t phys) {
+    __atomic_store_n(&frame(phys)->refs, 1, 0); /* __ATOMIC_RELAXED */
+}
+
+void frame_get(uintptr_t phys) {
     __atomic_add_fetch(&frame(phys)->refs, 1, 0); /* __ATOMIC_RELAXED */
 }
 
 /* the last mapping frees it */
-static void frame_put(uintptr_t phys) {
+void frame_put(uintptr_t phys) {
     if (__atomic_sub_fetch(&frame(phys)->refs, 1, 4) == 0) free_pages((void *)phys, 0); /* __ATOMIC_ACQ_REL */
 }
 
@@ -28,7 +32,8 @@ static void frame_put(uintptr_t phys) {
 static struct vma vma_piece(const struct vma *v, uintptr_t start, uintptr_t end) {
     if (v->file) fget(v->file);
 
-    return (struct vma){ .start = start, .end = end, .prot = v->prot, .file = v->file, .off = v->off + (start - v->start) };
+    return (struct vma){ .start = start, .end = end, .prot = v->prot, .file = v->file, .off = v->off + (start - v->start),
+                        .shared = v->shared };
 }
 
 /* out of the tree already */
@@ -138,6 +143,26 @@ static uintptr_t cow_break(struct mm *mm, struct vma *vma, uintptr_t page, uintp
 static uintptr_t vma_page(struct mm *mm, struct vma *vma, uintptr_t page, bool write) {
     bool writable = false;
     uintptr_t phys = pmap_lookup(mm->pmap, page, &writable);
+
+    /* the file's own page, mapped in place: nothing is copied, and a write to a read only entry just gets its right */
+    if (vma->shared) {
+        uint32_t rights = user_rights(vma->prot) | (vma->file->inode->ops->map_wc ? PROT_WC : 0);
+
+        if (phys) {
+            if (write && !writable && (vma->prot & PROT_WRITE)) pmap_protect(mm->pmap, page, PAGE_SIZE, rights);
+            return phys;
+        }
+
+        phys = vfs_getpage(vma->file->inode, (vma->off + (page - vma->start)) >> PAGE_SHIFT);
+        if (!phys) return 0;
+
+        if (pmap_map(mm->pmap, page, phys, PAGE_SIZE, rights) != 0) {
+            frame_put(phys);
+            return 0;
+        }
+
+        return phys;
+    }
 
     if (phys) {
         if (write && !writable && (vma->prot & PROT_WRITE)) return cow_break(mm, vma, page, phys);
@@ -400,7 +425,8 @@ long mm_mmap(struct mm *mm, uintptr_t addr, size_t size, uint32_t prot, uint32_t
     if (ret == 0) {
         if (file) fget(file);
 
-        *vma = (struct vma){ .start = addr, .end = addr + size, .prot = prot, .file = file, .off = off };
+        *vma = (struct vma){ .start = addr, .end = addr + size, .prot = prot, .file = file, .off = off,
+                             .shared = file && (flags & MAP_SHARED) };
         RB_INSERT(vma_tree, &mm->vmas, vma);
     }
 
@@ -596,12 +622,12 @@ long mm_remap(struct mm *mm, uintptr_t old, size_t old_size, size_t new_size, bo
         if (vma->file) fget(vma->file);
 
         *moved = (struct vma){ .start = to, .end = to + new_size, .prot = vma->prot, .file = vma->file,
-                               .off = vma->off + (old - vma->start) };
+                               .off = vma->off + (old - vma->start), .shared = vma->shared };
         RB_INSERT(vma_tree, &mm->vmas, moved);
         moved = NULL;
 
         /* read only: a write faults, and cow_break() gives it back if the frame is ours alone */
-        uint32_t rights = user_rights((vma->prot & ~PROT_WRITE) | PROT_READ);
+        uint32_t rights = vma->shared ? user_rights(vma->prot) : user_rights((vma->prot & ~PROT_WRITE) | PROT_READ);
 
         for (size_t off = 0; off < old_size; off += PAGE_SIZE) {
             uintptr_t frame_phys;
@@ -694,10 +720,10 @@ struct mm *mm_fork(struct mm *old) {
         *copy = vma_piece(vma, vma->start, vma->end);
         RB_INSERT(vma_tree, &mm->vmas, copy);
 
-        /* both sides read-only: the first write to it copies */
-        uint32_t rights = user_rights(vma->prot & ~PROT_WRITE);
+        /* both sides read-only: the first write to it copies. a shared mapping stays what it is, both write the same page */
+        uint32_t rights = vma->shared ? user_rights(vma->prot) : user_rights(vma->prot & ~PROT_WRITE);
 
-        if ((vma->prot & PROT_WRITE) && pmap_protect(old->pmap, vma->start, vma->end - vma->start, rights))
+        if (!vma->shared && (vma->prot & PROT_WRITE) && pmap_protect(old->pmap, vma->start, vma->end - vma->start, rights))
             shared = true;
 
         for (uintptr_t va = vma->start; va < vma->end; va += PAGE_SIZE) {

@@ -1,4 +1,5 @@
 DRIVERS := \
+	fb \
 	mem \
 	tty \
 	serial

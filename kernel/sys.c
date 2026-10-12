@@ -6,6 +6,7 @@
 #include <serika/printk.h>
 #include <serika/string.h>
 #include <serika/syscall.h>
+#include <serika/sched.h>
 #include <serika/task.h>
 
 #include <asm/arch.h>
@@ -124,4 +125,124 @@ long sys_sched_setaffinity(long pid, long size, long umask) {
     uint64_t online = g_bootinfo.smp.total_cores >= 64 ? ~0ULL : (1ULL << g_bootinfo.smp.total_cores) - 1;
 
     return (first & online) ? 0 : -EINVAL;
+}
+
+#define PRIO_PROCESS 0
+
+/* only a thread, and only by number: groups and users are not here. nice is -20 to 19 */
+long sys_setpriority(long which, long who, long prio) {
+    int nice = prio < -20 ? -20 : prio > 19 ? 19 : (int)prio;
+
+    if (which != PRIO_PROCESS) return -EINVAL;
+
+    return task_nice(who, &nice, true);
+}
+
+/* the raw call gives 20 - nice, so that it is never negative */
+long sys_getpriority(long which, long who) {
+    int nice;
+
+    if (which != PRIO_PROCESS) return -EINVAL;
+
+    long err = task_nice(who, &nice, false);
+    return err ? err : 20 - nice;
+}
+
+#define SCHED_OTHER 0
+#define SCHED_BATCH 3
+#define SCHED_IDLE  5
+
+/* the fair policies are all there is: batch and idle are what other is. realtime is refused */
+long sys_sched_setscheduler(long pid, long policy, long uparam) {
+    int32_t priority;
+
+    if (copy_from_user(&priority, uparam, sizeof(priority)) != 0) return -EFAULT;
+    if (policy != SCHED_OTHER && policy != SCHED_BATCH && policy != SCHED_IDLE) return policy < 0 || policy > 5 ? -EINVAL : -EPERM;
+    if (priority != 0) return -EINVAL;
+
+    int nice;
+    return task_nice(pid, &nice, false);
+}
+
+long sys_sched_getscheduler(long pid) {
+    int nice;
+    long err = task_nice(pid, &nice, false);
+
+    return err ? err : SCHED_OTHER;
+}
+
+long sys_sched_getparam(long pid, long uparam) {
+    int nice, priority = 0;
+    long err = task_nice(pid, &nice, false);
+
+    return err ? err : copy_to_user(uparam, &priority, sizeof(priority));
+}
+
+/* 0 and 0 for the fair ones, as linux. the realtime range is named and cannot be used */
+long sys_sched_get_priority(long policy, bool max) {
+    switch (policy) {
+        case SCHED_OTHER:
+        case SCHED_BATCH:
+        case SCHED_IDLE:
+            return 0;
+
+        case 1: /* FIFO */
+        case 2: /* RR */
+            return max ? 99 : 1;
+    }
+
+    return -EINVAL;
+}
+
+long sys_sched_yield(void) {
+    schedule();
+    return 0;
+}
+
+long sys_getcpu(long ucpu, long unode) {
+    uint32_t cpu = curcpu->id, node = 0;
+
+    if (ucpu && copy_to_user(ucpu, &cpu, sizeof(cpu)) != 0) return -EFAULT;
+    if (unode && copy_to_user(unode, &node, sizeof(node)) != 0) return -EFAULT;
+
+    return 0;
+}
+
+#define PR_SET_PDEATHSIG 1
+#define PR_GET_DUMPABLE  3
+#define PR_SET_DUMPABLE  4
+#define PR_SET_NAME      15
+#define PR_GET_NAME      16
+#define PR_SET_NO_NEW_PRIVS 38
+#define PR_GET_NO_NEW_PRIVS 39
+
+/* the name of a thread, and the flags a program sets about itself, which change nothing here */
+long sys_prctl(long option, long arg2) {
+    struct task *curr = current_task();
+    char name[16];
+
+    switch (option) {
+        case PR_SET_NAME:
+            memset(name, 0, sizeof(name));
+            if (strncpy_from_user(name, arg2, sizeof(name) - 1) < 0) return -EFAULT;
+
+            memcpy(curr->comm, name, sizeof(name));
+            return 0;
+
+        case PR_GET_NAME:
+            return copy_to_user(arg2, curr->comm, sizeof(curr->comm));
+
+        case PR_GET_DUMPABLE:
+            return 1;
+
+        case PR_SET_DUMPABLE:
+        case PR_SET_PDEATHSIG:
+        case PR_SET_NO_NEW_PRIVS:
+            return 0;
+
+        case PR_GET_NO_NEW_PRIVS:
+            return 0;
+    }
+
+    return -EINVAL;
 }

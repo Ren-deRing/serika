@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #define SYS_READ              0
 #define SYS_WRITE             1
 #define SYS_OPEN              2
@@ -23,7 +25,9 @@
 #define SYS_ACCESS           21
 #define SYS_PIPE             22
 #define SYS_SELECT           23
+#define SYS_SCHED_YIELD      24
 #define SYS_MREMAP           25
+#define SYS_MSYNC            26
 #define SYS_MADVISE          28
 #define SYS_DUP              32
 #define SYS_DUP2             33
@@ -77,6 +81,14 @@
 #define SYS_RT_SIGPENDING   127
 #define SYS_RT_SIGSUSPEND   130
 #define SYS_MKNOD           133
+#define SYS_GETPRIORITY     140
+#define SYS_SETPRIORITY     141
+#define SYS_SCHED_GETPARAM  143
+#define SYS_SCHED_SETSCHEDULER 144
+#define SYS_SCHED_GETSCHEDULER 145
+#define SYS_SCHED_GET_PRIORITY_MAX 146
+#define SYS_SCHED_GET_PRIORITY_MIN 147
+#define SYS_PRCTL           157
 #define SYS_ARCH_PRCTL      158
 #define SYS_SYNC            162
 #define SYS_GETTID          186
@@ -107,11 +119,14 @@
 #define SYS_PPOLL           271
 #define SYS_SET_ROBUST_LIST 273
 #define SYS_UTIMENSAT       280
+#define SYS_FALLOCATE       285
 #define SYS_DUP3            292
 #define SYS_PIPE2           293
 #define SYS_PRLIMIT64       302
+#define SYS_GETCPU          309
 #define SYS_RENAMEAT2       316
 #define SYS_GETRANDOM       318
+#define SYS_MEMFD_CREATE    319
 #define SYS_RSEQ            334
 #define SYS_CLONE3          435
 #define SYS_FACCESSAT2      439
@@ -138,6 +153,8 @@ long sys_faccessat(long dirfd, long upath, long mode);
 long sys_readv(long fd, long uiov, long count);
 long sys_writev(long fd, long uiov, long count);
 long sys_sendfile(long out_fd, long in_fd, long uoff, long count);
+long sys_memfd_create(long uname, long flags);
+long sys_fallocate(long fd, long mode, long off, long len);
 long sys_pipe2(long ufds, long flags);
 long sys_dup(long fd);
 long sys_dup2(long oldfd, long newfd);
@@ -174,6 +191,15 @@ long sys_sysinfo(long ubuf);
 long sys_sched_getaffinity(long pid, long size, long umask);
 long sys_sched_setaffinity(long pid, long size, long umask);
 long sys_getrusage(long who, long ubuf);
+long sys_setpriority(long which, long who, long prio);
+long sys_getpriority(long which, long who);
+long sys_sched_setscheduler(long pid, long policy, long uparam);
+long sys_sched_getscheduler(long pid);
+long sys_sched_getparam(long pid, long uparam);
+long sys_sched_get_priority(long policy, bool max);
+long sys_sched_yield(void);
+long sys_getcpu(long ucpu, long unode);
+long sys_prctl(long option, long arg2);
 
 /* fs/select.c */
 long sys_poll(long ufds, long nfds, long timeout_ms);

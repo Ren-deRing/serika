@@ -799,3 +799,22 @@ long sys_setsid(void) {
     spin_unlock_irqrestore(&tasklist_lock, f);
     return ret;
 }
+
+/* setpriority()/getpriority() of one thread. 0: the caller */
+long task_nice(long tid, int *nice, bool set) {
+    long ret = -ESRCH;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = tid ? pid_find(tid) : current_task();
+
+    if (t && t->group) {
+        if (set) sched_set_nice(t, *nice);
+        else     *nice = t->nice;
+
+        ret = 0;
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return ret;
+}

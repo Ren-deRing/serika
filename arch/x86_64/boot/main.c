@@ -74,6 +74,9 @@ void boot_entry(void) {
     g_bootinfo.fb.height  = fb->height;
     g_bootinfo.fb.pitch   = fb->pitch;
     g_bootinfo.fb.bpp     = fb->bpp;
+    g_bootinfo.fb.red_shift   = fb->red_mask_shift;   g_bootinfo.fb.red_size   = fb->red_mask_size;
+    g_bootinfo.fb.green_shift = fb->green_mask_shift; g_bootinfo.fb.green_size = fb->green_mask_size;
+    g_bootinfo.fb.blue_shift  = fb->blue_mask_shift;  g_bootinfo.fb.blue_size  = fb->blue_mask_size;
 
     /* Kernel Binery */
     g_bootinfo.kernel.phys_base = kernel_address->physical_base;

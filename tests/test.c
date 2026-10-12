@@ -50,6 +50,7 @@ static struct test tests[] = {
     { "exec files",  test_exec_files },
     { "exec busybox", test_exec_busybox },
     { "exec syscalls", test_exec_syscalls },
+    { "exec gl",     test_exec_gl },
     { "signal glibc", test_signal_glibc },
     { "fork glibc",  test_fork_glibc },
     { "thread glibc", test_thread_glibc },

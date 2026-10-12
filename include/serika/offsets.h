@@ -50,9 +50,10 @@
 #define TASK_PID_NEXT_OFFSET             0x00730
 #define TASK_GROUP_OFFSET                0x00738
 #define TASK_GROUP_NODE_OFFSET           0x00740
-#define TASK_VFORK_DONE_OFFSET           0x00750
-#define TASK_ROBUST_LIST_OFFSET          0x00758
-#define TASK_CLEAR_CHILD_TID_OFFSET      0x00760
+#define TASK_COMM_OFFSET                 0x00750
+#define TASK_VFORK_DONE_OFFSET           0x00760
+#define TASK_ROBUST_LIST_OFFSET          0x00768
+#define TASK_CLEAR_CHILD_TID_OFFSET      0x00770
 #define PMAP_PM_ROOT_VIRT_OFFSET         0x00000
 #define PMAP_PM_ROOT_PHYS_OFFSET         0x00008
 #define PMAP_LOCK_OFFSET                 0x00010

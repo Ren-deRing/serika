@@ -14,24 +14,45 @@ static long sys_exit(long code) {
 }
 
 /* private only: anonymous, or a file read in page by page as it is touched */
+/* private: anonymous, or a file read in page by page as it is touched. shared: the pages of a file, written in
+ * place, or anonymous memory that is a file nobody can open, as linux does it */
 static long sys_mmap(long addr, long len, long prot, long flags, long fd, long off) {
     struct file *file = NULL;
+    bool shared = (flags & (MAP_SHARED | MAP_PRIVATE)) == MAP_SHARED;
 
-    if ((flags & (MAP_SHARED | MAP_PRIVATE)) != MAP_PRIVATE) {
+    if (!shared && (flags & (MAP_SHARED | MAP_PRIVATE)) != MAP_PRIVATE) {
         printk("syscall: mmap flags 0x%lx not supported -- task %lu\n", flags, current_task()->id);
         return -EINVAL;
     }
 
-    if (!(flags & MAP_ANONYMOUS)) {
+    if (len <= 0) return -EINVAL;
+
+    if (flags & MAP_ANONYMOUS) {
+        if (shared) {
+            struct inode *inode = ramfs_anon_file();
+            if (inode) {
+                inode->size = ALIGN_UP(len, PAGE_SIZE);
+                file = file_alloc(inode, O_RDWR);
+                if (!file) iput(inode);
+            }
+
+            if (!file) return -ENOMEM;
+        }
+    } else {
         if (!(file = fd_get(fd))) return -EBADF;
 
-        if (!S_ISREG(file->inode->mode) || (file->flags & O_ACCMODE) == O_WRONLY) {
+        bool rdonly = (file->flags & O_ACCMODE) == O_RDONLY, wronly = (file->flags & O_ACCMODE) == O_WRONLY;
+
+        bool mappable = S_ISREG(file->inode->mode) || (S_ISCHR(file->inode->mode) && shared && file->inode->ops->getpage);
+
+        if (!mappable || wronly || (file->flags & O_PATH) ||
+            (shared && (!file->inode->ops->getpage || ((prot & PROT_WRITE) && rdonly)))) {
             vfs_close(file);
             return -EACCES;
         }
     }
 
-    long ret = mm_mmap(current_task()->mm, addr, len, prot, flags, file, file ? off : 0);
+    long ret = mm_mmap(current_task()->mm, addr, len, prot, flags, file, file && !(flags & MAP_ANONYMOUS) ? off : 0);
 
     if (file) vfs_close(file);
     return ret;
@@ -40,6 +61,8 @@ static long sys_mmap(long addr, long len, long prot, long flags, long fd, long o
 
 #define MADV_DONTNEED 4
 #define MADV_FREE     8
+#define MADV_GUARD_INSTALL 102
+#define MADV_GUARD_REMOVE  103
 
 /* DONTNEED and FREE drop the pages, and the memory reads zero after. what only advises is taken and changes
  * nothing. what changes what fork or a file does is refused: DONTFORK, WIPEONFORK, REMOVE */
@@ -48,6 +71,13 @@ static long sys_madvise(long addr, long len, long advice) {
         case MADV_DONTNEED:
         case MADV_FREE:
             return mm_discard(current_task()->mm, addr, len);
+
+        /* a range nothing may touch, and given back: glibc's stack guards. not a marker inside a vma, a protection */
+        case MADV_GUARD_INSTALL:
+            return mm_protect(current_task()->mm, addr, len, PROT_NONE);
+
+        case MADV_GUARD_REMOVE:
+            return mm_protect(current_task()->mm, addr, len, PROT_READ | PROT_WRITE);
 
         case 0:  /* NORMAL */
         case 1:  /* RANDOM */
@@ -163,6 +193,19 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_READLINK:        return sys_readlinkat(AT_FDCWD, args[0], args[1], args[2]);
         case SYS_GETTIMEOFDAY:    return sys_gettimeofday(args[0], args[1]);
         case SYS_TIME:            return sys_time(args[0]);
+        case SYS_SCHED_YIELD:     return sys_sched_yield();
+        case SYS_MSYNC:           return 0; /* memory only: nothing to write out */
+        case SYS_GETPRIORITY:     return sys_getpriority((int)args[0], (int)args[1]);
+        case SYS_SETPRIORITY:     return sys_setpriority((int)args[0], (int)args[1], (int)args[2]);
+        case SYS_SCHED_GETPARAM:  return sys_sched_getparam((int)args[0], args[1]);
+        case SYS_SCHED_SETSCHEDULER: return sys_sched_setscheduler((int)args[0], (int)args[1], args[2]);
+        case SYS_SCHED_GETSCHEDULER: return sys_sched_getscheduler((int)args[0]);
+        case SYS_SCHED_GET_PRIORITY_MAX: return sys_sched_get_priority((int)args[0], true);
+        case SYS_SCHED_GET_PRIORITY_MIN: return sys_sched_get_priority((int)args[0], false);
+        case SYS_PRCTL:           return sys_prctl((int)args[0], args[1]);
+        case SYS_GETCPU:          return sys_getcpu(args[0], args[1]);
+        case SYS_FALLOCATE:       return sys_fallocate(args[0], (int)args[1], args[2], args[3]);
+        case SYS_MEMFD_CREATE:    return sys_memfd_create(args[0], (uint32_t)args[1]);
         case SYS_GETRUSAGE:       return sys_getrusage((int)args[0], args[1]);
         case SYS_SYSINFO:         return sys_sysinfo(args[0]);
         case SYS_UMASK:           return sys_umask(args[0]);

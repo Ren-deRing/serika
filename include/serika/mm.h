@@ -24,8 +24,9 @@ struct vma {
     uintptr_t    start;
     uintptr_t    end;  /* exclusive */
     uint32_t     prot; /* PROT_READ, PROT_WRITE, PROT_EXEC */
-    struct file *file; /* MAP_PRIVATE of a file, our reference. NULL: anonymous */
+    struct file *file; /* a file mapped, our reference. NULL: anonymous */
     uint64_t     off;  /* where start is in it */
+    bool         shared; /* MAP_SHARED: the file's own pages, written to in place. else a private copy of them */
 
     RB_ENTRY(vma) node;
 };
@@ -54,6 +55,11 @@ static inline int vma_cmp(struct vma *a, struct vma *b) {
 }
 
 RB_PROTOTYPE(vma_tree, vma, node, vma_cmp);
+
+/* a frame's references: each mapping of it has one, and so does whatever else holds it (a ramfs file) */
+void frame_init(uintptr_t phys); /* a new one: a reference */
+void frame_get(uintptr_t phys);
+void frame_put(uintptr_t phys);  /* the last one frees it */
 
 struct mm *mm_create(void);
 void mm_get(struct mm *mm);

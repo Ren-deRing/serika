@@ -94,6 +94,7 @@ struct task {
 
     struct tgroup    *group;         /* NULL for kthreads */
     list_node         group_node;    /* in group->threads while alive */
+    char              comm[16];      /* prctl(PR_SET_NAME), for whoever asks */
     struct vfork_done *vfork_done; /* the parent waits for this task to exec or exit */
     uintptr_t         robust_list;   /* user's robust_list_head: locks it held are marked on exit */
     uintptr_t         clear_child_tid; /* zeroed and futex-woken on exit: pthread_join waits on it */
@@ -126,5 +127,6 @@ int task_clone_thread(const struct trapframe *tf, struct task **out);
 void task_group_exit(long code);
 int task_signal_thread(long tgid, long tid, int sig, const struct ksiginfo *info); /* tgid 0: any */
 void task_exec_mm(struct mm *mm);
+long task_nice(long tid, int *nice, bool set); /* one thread. 0: the caller */
 int task_signal_pgrp(long pgid, int sig, const struct ksiginfo *info); /* every process in it */
 int task_signal(long pid, int sig, const struct ksiginfo *info); /* the process. sig 0: is it there */

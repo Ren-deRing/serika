@@ -66,6 +66,7 @@ void sched_kick(struct task *t);
 void sched_init(void);
 void sched_tick(void);
 void sched_add_task(struct task *task);
+void sched_set_nice(struct task *t, int nice); /* -20 to 19 */
 void sched_add_task_cpu(struct task *task, uint32_t cpu);
 uint32_t sched_nr_online(void);
 bool sched_cpu_online(uint32_t cpu);

@@ -150,3 +150,22 @@ their sets into pollfds and back, `ppoll` and `pselect6` take a signal mask
 `get_random_bytes()` is ChaCha20 with fast key erasure, seeded at boot from `RDSEED` (or `RDRAND`)
 and the tsc. With neither it says so and is not secure. `getrandom()` and `AT_RANDOM` use it,
 and never wait.
+
+## Mesa
+
+`user/mesa.sh` copies the host's mesa (`libEGL`, `libGLESv2`, glvnd, `libgallium` with llvmpipe, `libLLVM` and what
+they load) to the same paths in the initrd, and `/bin/gltest` draws into a texture on a context with no display
+(`EGL_PLATFORM=surfaceless`, `LIBGL_ALWAYS_SOFTWARE=1`) and checks the pixels. It is 260 MB: it wants `-m 2G` or more.
+What it asked of the kernel beyond the rest: `memfd_create` and `MAP_SHARED` of it, `prctl(PR_SET_NAME)` for its
+rasterizer threads, `setpriority` and `sched_setscheduler`, `madvise(MADV_GUARD_INSTALL)` for glibc's thread stacks,
+`sched_getaffinity`.
+
+## Framebuffer
+
+`/dev/fb0` (29:0) is the framebuffer the bootloader set up, made in `vfs_init()` by `fb_devices_create()`
+(`drivers/builtin/fb/`): 32 bits per pixel, the mode the boot gave and where its colors are
+(`FBIOGET_VSCREENINFO`, `FBIOGET_FSCREENINFO`; the mode can not be changed). A program reads, writes, or
+`mmap`s it with `MAP_SHARED`: its `getpage` hands out the device's frames, which `frame_init()` gave a reference
+that no mapping can drop, and `map_wc` has them mapped write-combining. `/bin/fbdemo [seconds]` draws a turning
+triangle with llvmpipe and copies each frame to it, printing the frame rate.
+

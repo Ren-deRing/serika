@@ -195,7 +195,7 @@ long sys_close(long fd) {
 
 /* no position: a pipe or a tty */
 static bool is_stream(struct inode *inode) {
-    return S_ISCHR(inode->mode) || S_ISFIFO(inode->mode);
+    return inode->ops->stream;
 }
 
 /* data goes through a bounce page: no inode lock is held while user memory is touched */
@@ -1108,5 +1108,52 @@ long sys_mknodat(long dirfd, long upath, long mode, long dev) {
     }
 
     kfree(path);
+    return err;
+}
+
+#define MFD_CLOEXEC       0x0001
+#define MFD_ALLOW_SEALING 0x0002
+
+/* a file nobody can open by name: it goes with its last fd and mapping. no sealing: the flag is taken */
+long sys_memfd_create(long uname, long flags) {
+    char name[250];
+
+    if (flags & ~(MFD_CLOEXEC | MFD_ALLOW_SEALING)) return -EINVAL;
+
+    long len = strncpy_from_user(name, uname, sizeof(name) - 1);
+    if (len < 0) return len;
+
+    struct inode *inode = ramfs_anon_file();
+    if (!inode) return -ENOMEM;
+
+    struct file *f = file_alloc(inode, O_RDWR);
+    if (!f) {
+        iput(inode);
+        return -ENOMEM;
+    }
+
+    int fd = fd_install(current_task()->files, f, flags & MFD_CLOEXEC, 0);
+    if (fd < 0) vfs_close(f);
+
+    return fd;
+}
+
+#define FALLOC_FL_KEEP_SIZE 0x01
+
+/* space for a file that grows with its writes anyway: the size is all there is to give. no holes punched */
+long sys_fallocate(long fd, long mode, long off, long len) {
+    if (off < 0 || len <= 0) return -EINVAL;
+    if (mode & ~FALLOC_FL_KEEP_SIZE) return -EOPNOTSUPP;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    long err = 0;
+
+    if ((f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH)) err = -EBADF;
+    else if (!S_ISREG(f->inode->mode)) err = -ENODEV;
+    else if (!(mode & FALLOC_FL_KEEP_SIZE) && (uint64_t)off + len > f->inode->size) err = vfs_truncate(f->inode, off + len);
+
+    vfs_close(f);
     return err;
 }
