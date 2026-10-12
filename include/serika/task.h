@@ -116,6 +116,7 @@ void task_dead(struct task *task);
 void task_exit(long code);
 long task_wait(struct task *child, long *status, int options);
 long task_waitpid(long pid, long *status, int options);
+struct files *task_files_get(uint64_t pid); /* a process's open files, referenced (/proc) */
 int task_fork(const struct trapframe *tf, bool share_mm, bool clear_sighand, struct task **out);
 
 /* clone(CLONE_VFORK): the parent sleeps until the child has left the mm it shares, by exec or exit */

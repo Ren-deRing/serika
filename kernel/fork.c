@@ -136,6 +136,57 @@ long sys_vfork(void) {
     return sys_clone(SIGCHLD, 0, 0, 0, 0);
 }
 
+#define P_ALL  0
+#define P_PID  1
+#define P_PGID 2
+
+#define WNOHANG    1
+#define WSTOPPED   2
+#define WEXITED    4
+#define WCONTINUED 8
+#define WNOWAIT    0x01000000
+
+#define CLD_EXITED 1
+#define CLD_KILLED 2
+#define CLD_DUMPED 3
+
+/* wait4 with the child told in a siginfo: si_signo, si_code and, from byte 16, the pid, the uid and the status */
+long sys_waitid(long idtype, long id, long usi, long options, long urusage) {
+    if (options & ~(WNOHANG | WSTOPPED | WEXITED | WCONTINUED | WNOWAIT)) return -EINVAL;
+    if (!(options & (WEXITED | WSTOPPED | WCONTINUED))) return -EINVAL;
+
+    long pid;
+
+    switch (idtype) {
+        case P_ALL:  pid = -1; break;
+        case P_PID:  if (id <= 0) return -EINVAL; pid = id; break;
+        case P_PGID: pid = id ? -id : 0; break;
+        default:     return -EINVAL;
+    }
+
+    long status = 0;
+    long ret = task_waitpid(pid, &status, options & WNOHANG);
+    if (ret < 0) return ret;
+
+    int32_t si[32] = { 0 }; /* 128 bytes */
+
+    if (ret > 0) {
+        si[0] = 17; /* SIGCHLD */
+        si[2] = (status & 0x7f) == 0 ? CLD_EXITED : (status & 0x80) ? CLD_DUMPED : CLD_KILLED;
+        si[4] = ret;
+        si[6] = (status & 0x7f) == 0 ? (status >> 8) & 0xff : status & 0x7f;
+    }
+
+    if (usi && copy_to_user(usi, si, sizeof(si)) != 0) return -EFAULT;
+
+    if (urusage) {
+        uint8_t zero[144] = { 0 };
+        if (copy_to_user(urusage, zero, sizeof(zero)) != 0) return -EFAULT;
+    }
+
+    return 0;
+}
+
 long sys_wait4(long pid, long ustatus, long options, long urusage) {
     long status = 0;
     long ret = task_waitpid(pid, &status, options & WNOHANG);

@@ -34,6 +34,9 @@ void vfs_init(void) {
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
         if (vfs_link_inode(names[i], console_inode) != 0) panic("vfs: unable to create %s -- out of memory?", names[i]);
 
+    /* shm_open() makes its files here: a window's pixels, for the programs that do not use memfd */
+    if (vfs_mkdir("/dev/shm", 01777) != 0) panic("vfs: unable to create /dev/shm -- out of memory?");
+
     mem_devices_create();
     fb_devices_create();
     drm_devices_create();
@@ -279,6 +282,17 @@ int vfs_open(const char *path, uint32_t flags, uint32_t mode, struct file **out)
             break;
         }
 
+        /* some are the file itself: what it leads to is opened, not a path walked */
+        if (inode->ops->follow_link) {
+            struct inode *target;
+
+            err = ++links > SYMLINK_MAX ? -ELOOP : inode->ops->follow_link(inode, &target);
+
+            iput(inode);
+            inode = err ? NULL : target;
+            break;
+        }
+
         err = ++links > SYMLINK_MAX ? -ELOOP : splice_link(work, "", inode);
 
         iput(inode);
@@ -353,6 +367,7 @@ struct file *file_alloc(struct inode *inode, uint32_t flags) {
     f->refs  = 1;
     f->pos   = 0;
     f->priv  = NULL;
+    f->path  = NULL;
     mutex_init(&f->pos_lock);
 
     return f;
@@ -385,6 +400,7 @@ void vfs_close(struct file *f) {
     if (f->inode->ops->release && !(f->flags & O_PATH)) f->inode->ops->release(f->inode, f->flags);
 
     iput(f->inode);
+    kfree(f->path);
     kfree(f);
 }
 
@@ -729,7 +745,7 @@ long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos) {
 
     if ((f->flags & O_ACCMODE) == O_WRONLY || (f->flags & O_PATH)) return -EBADF;
     if (S_ISDIR(inode->mode)) return -EISDIR;
-    if (inode->ops->stream) return inode->ops->stream_read(f, buf, n);
+    if (inode->ops->stream) return inode->ops->stream_read ? inode->ops->stream_read(f, buf, n) : -EINVAL;
 
     if (!inode->ops->read) return -EINVAL;
 
@@ -745,7 +761,7 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos) {
     struct inode *inode = f->inode;
 
     if ((f->flags & O_ACCMODE) == O_RDONLY || (f->flags & O_PATH)) return -EBADF;
-    if (inode->ops->stream) return inode->ops->stream_write(f, buf, n);
+    if (inode->ops->stream) return inode->ops->stream_write ? inode->ops->stream_write(f, buf, n) : -EINVAL;
 
     if (!inode->ops->write) return -EINVAL;
 

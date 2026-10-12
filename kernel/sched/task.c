@@ -573,6 +573,23 @@ static struct task *pid_find(long id) {
     return NULL;
 }
 
+/* the open files of a process, for /proc: referenced (files_put() them), NULL if there is none. pid leads a process */
+struct files *task_files_get(uint64_t pid) {
+    struct files *files = NULL;
+
+    uint64_t f = spin_lock_irqsave(&tasklist_lock);
+
+    struct task *t = pid_find(pid);
+
+    if (t && t->files && t->group && t->group->tgid == pid) {
+        files = t->files;
+        files_get(files);
+    }
+
+    spin_unlock_irqrestore(&tasklist_lock, f);
+    return files;
+}
+
 /* kill(): the process pid leads */
 int task_signal(long pid, int sig, const struct ksiginfo *info) {
     int err = -ESRCH;

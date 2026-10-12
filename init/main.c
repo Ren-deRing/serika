@@ -4,6 +4,7 @@
 #include <serika/cpu.h>
 #include <serika/exec.h>
 #include <serika/ftrace.h>
+#include <serika/input.h>
 #include <serika/irq.h>
 #include <serika/patch.h>
 #include <serika/page.h>
@@ -88,6 +89,11 @@ notrace void start_init(void) {
 
     /* what is big is on the disk */
     if (vfs_mount("vda", "/usr", "ext4") != 0) printk("init: no disk to mount on /usr\n");
+
+    if (vfs_mount("proc", "/proc", "proc") != 0) printk("init: no /proc\n");
+
+    /* input devices have /sys and /dev entries to make, so after the file system */
+    virtio_input_init();
     
     test_run_all();
 

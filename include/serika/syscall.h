@@ -94,9 +94,13 @@
 #define SYS_SETSID          112
 #define SYS_GETPGID         121
 #define SYS_GETSID          124
+#define SYS_CAPGET          125
+#define SYS_CAPSET          126
 #define SYS_RT_SIGPENDING   127
 #define SYS_RT_SIGSUSPEND   130
 #define SYS_MKNOD           133
+#define SYS_STATFS          137
+#define SYS_FSTATFS         138
 #define SYS_GETPRIORITY     140
 #define SYS_SETPRIORITY     141
 #define SYS_SCHED_GETPARAM  143
@@ -123,6 +127,7 @@
 #define SYS_EPOLL_WAIT      232
 #define SYS_EPOLL_CTL       233
 #define SYS_TGKILL          234
+#define SYS_WAITID          247
 #define SYS_OPENAT          257
 #define SYS_MKDIRAT         258
 #define SYS_MKNODAT         259
@@ -159,6 +164,7 @@
 #define SYS_RENAMEAT2       316
 #define SYS_GETRANDOM       318
 #define SYS_MEMFD_CREATE    319
+#define SYS_STATX           332
 #define SYS_RSEQ            334
 #define SYS_CLONE3          435
 #define SYS_FACCESSAT2      439
@@ -179,6 +185,9 @@ long sys_write(long fd, long buf, long count);
 long sys_lseek(long fd, long off, long whence);
 long sys_fstat(long fd, long ubuf);
 long sys_newfstatat(long dirfd, long upath, long ubuf, long flags);
+long sys_statx(long dirfd, long upath, long flags, long mask, long ubuf);
+long sys_statfs(long upath, long ubuf);
+long sys_fstatfs(long fd, long ubuf);
 long sys_ioctl(long fd, long cmd, long arg);
 long sys_pread64(long fd, long buf, long count, long off);
 long sys_access(long upath, long mode);
@@ -266,6 +275,8 @@ long sys_setuid(long id);
 long sys_uname(long ubuf);
 long sys_prlimit64(long pid, long resource, long unew, long uold);
 long sys_sysinfo(long ubuf);
+long sys_capget(long uhdr, long udata);
+long sys_capset(long uhdr, long udata);
 long sys_sched_getaffinity(long pid, long size, long umask);
 long sys_sched_setaffinity(long pid, long size, long umask);
 long sys_getrusage(long who, long ubuf);
@@ -310,6 +321,7 @@ long sys_clone3(long uargs, long size);
 long sys_fork(void);
 long sys_vfork(void);
 long sys_wait4(long pid, long ustatus, long options, long urusage);
+long sys_waitid(long idtype, long id, long usi, long options, long urusage);
 
 /* kernel/sched/task.c */
 long sys_getppid(void);

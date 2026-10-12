@@ -37,10 +37,17 @@ long sys_uname(long ubuf) {
     return copy_to_user(ubuf, &u, sizeof(u));
 }
 
-/* nothing is limited, the stack reports the usual 8 MiB. none can be set */
+/* nothing is limited, the stack reports the usual 8 MiB. a limit can be set, and is not kept: it is taken and nothing
+ * is changed (programs lower their file limit for themselves, and take a refusal for a failure) */
 long sys_prlimit64(long pid, long resource, long unew, long uold) {
     if (pid != 0 && pid != sys_getpid()) return -ESRCH;
-    if (unew) return -EPERM;
+
+    if (unew) {
+        struct { uint64_t cur, max; } rl;
+
+        if (copy_from_user(&rl, unew, sizeof(rl)) != 0) return -EFAULT;
+        if (rl.cur > rl.max) return -EINVAL;
+    }
 
     if (uold) {
         struct { uint64_t cur, max; } rl = { RLIM_INFINITY, RLIM_INFINITY };
@@ -50,6 +57,47 @@ long sys_prlimit64(long pid, long resource, long unew, long uold) {
         return copy_to_user(uold, &rl, sizeof(rl));
     }
 
+    return 0;
+}
+
+/* capabilities: there are no users, so there is only root, who has them all */
+#define LINUX_CAPABILITY_VERSION_1 0x19980330
+#define LINUX_CAPABILITY_VERSION_2 0x20071026
+#define LINUX_CAPABILITY_VERSION_3 0x20080522
+
+struct cap_header {
+    uint32_t version;
+    int32_t  pid;
+};
+
+struct cap_data {
+    uint32_t effective;
+    uint32_t permitted;
+    uint32_t inheritable;
+};
+
+long sys_capget(long uhdr, long udata) {
+    struct cap_header h;
+
+    if (copy_from_user(&h, uhdr, sizeof(h)) != 0) return -EFAULT;
+
+    if (h.version != LINUX_CAPABILITY_VERSION_1 && h.version != LINUX_CAPABILITY_VERSION_2 &&
+        h.version != LINUX_CAPABILITY_VERSION_3) {
+        h.version = LINUX_CAPABILITY_VERSION_3; /* told back, with the error */
+        copy_to_user(uhdr, &h, sizeof(h));
+        return -EINVAL;
+    }
+
+    if (!udata) return 0; /* just the version */
+
+    struct cap_data d[2] = { { ~0u, ~0u, 0 }, { ~0u, ~0u, 0 } };
+
+    return copy_to_user(udata, d, (h.version == LINUX_CAPABILITY_VERSION_1 ? 1 : 2) * sizeof(d[0]));
+}
+
+/* taken and not kept: it cannot lose what it has, and has everything */
+long sys_capset(long uhdr, long udata) {
+    (void)uhdr; (void)udata;
     return 0;
 }
 

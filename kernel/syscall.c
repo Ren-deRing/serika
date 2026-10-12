@@ -129,8 +129,82 @@ static long sys_exit_group(long code) {
     return 0;
 }
 
-/* an int or pid_t argument has its low 32 bits only: the rest of the register is whatever the caller left */
+static long do_syscall(long nr, const long args[6]);
+
+volatile int syscall_trace; /* /dev/strace: every call, its arguments and what it returned, on the console */
+
+static const char *syscall_name(long nr) {
+    switch (nr) {
+        case SYS_READ: return "read";             case SYS_WRITE: return "write";
+        case SYS_OPEN: return "open";             case SYS_CLOSE: return "close";
+        case SYS_STAT: return "stat";             case SYS_FSTAT: return "fstat";
+        case SYS_LSTAT: return "lstat";           case SYS_POLL: return "poll";
+        case SYS_LSEEK: return "lseek";           case SYS_MMAP: return "mmap";
+        case SYS_MPROTECT: return "mprotect";     case SYS_MUNMAP: return "munmap";
+        case SYS_IOCTL: return "ioctl";           case SYS_PREAD64: return "pread64";
+        case SYS_ACCESS: return "access";         case SYS_PIPE: return "pipe";
+        case SYS_DUP: return "dup";               case SYS_DUP2: return "dup2";
+        case SYS_SOCKET: return "socket";         case SYS_CONNECT: return "connect";
+        case SYS_BIND: return "bind";             case SYS_LISTEN: return "listen";
+        case SYS_SETSOCKOPT: return "setsockopt"; case SYS_GETSOCKOPT: return "getsockopt";
+        case SYS_GETSOCKNAME: return "getsockname"; case SYS_SENDMSG: return "sendmsg";
+        case SYS_RECVMSG: return "recvmsg";       case SYS_CLONE: return "clone";
+        case SYS_FORK: return "fork";             case SYS_VFORK: return "vfork";
+        case SYS_EXECVE: return "execve";         case SYS_EXIT: return "exit";
+        case SYS_WAIT4: return "wait4";           case SYS_KILL: return "kill";
+        case SYS_FCNTL: return "fcntl";           case SYS_GETCWD: return "getcwd";
+        case SYS_READLINK: return "readlink";     case SYS_FSTATFS: return "fstatfs";
+        case SYS_STATFS: return "statfs";         case SYS_GETDENTS64: return "getdents64";
+        case SYS_OPENAT: return "openat";         case SYS_NEWFSTATAT: return "newfstatat";
+        case SYS_READLINKAT: return "readlinkat"; case SYS_FACCESSAT: return "faccessat";
+        case SYS_FACCESSAT2: return "faccessat2"; case SYS_STATX: return "statx";
+        case SYS_PRLIMIT64: return "prlimit64";   case SYS_CAPGET: return "capget";
+        case SYS_WAITID: return "waitid";         case SYS_EPOLL_WAIT: return "epoll_wait";
+        case SYS_EPOLL_CTL: return "epoll_ctl";   case SYS_EPOLL_CREATE1: return "epoll_create1";
+        case SYS_FLOCK: return "flock";           case SYS_PPOLL: return "ppoll";
+        case SYS_UNLINKAT: return "unlinkat";     case SYS_MKDIRAT: return "mkdirat";
+        case SYS_GETRANDOM: return "getrandom";   case SYS_MEMFD_CREATE: return "memfd_create";
+        case SYS_BRK: return "brk";               case SYS_FUTEX: return "futex";
+    }
+
+    return "?";
+}
+
+/* the argument that is a path, if the call has one */
+static int syscall_path_arg(long nr) {
+    switch (nr) {
+        case SYS_OPEN: case SYS_STAT: case SYS_LSTAT: case SYS_ACCESS: case SYS_READLINK: case SYS_STATFS:
+        case SYS_EXECVE:
+            return 0;
+
+        case SYS_OPENAT: case SYS_NEWFSTATAT: case SYS_READLINKAT: case SYS_FACCESSAT: case SYS_FACCESSAT2:
+        case SYS_STATX: case SYS_UNLINKAT: case SYS_MKDIRAT:
+            return 1;
+    }
+
+    return -1;
+}
+
 long syscall_dispatch(long nr, const long args[6]) {
+    if (!syscall_trace) return do_syscall(nr, args);
+
+    char path[64] = "";
+    int pa = syscall_path_arg(nr);
+
+    if (pa >= 0) {
+        long n = strncpy_from_user(path, args[pa], sizeof(path) - 1);
+        path[n > 0 ? n : 0] = 0;
+    }
+
+    long ret = do_syscall(nr, args);
+
+    printk("trace %lu: %s(%ld)(%lx, %lx, %lx, %lx)%s%s%s = %ld\n", current_task()->id, syscall_name(nr), nr, args[0],
+           args[1], args[2], args[3], path[0] ? " \"" : "", path, path[0] ? "\"" : "", ret);
+    return ret;
+}
+
+/* an int or pid_t argument has its low 32 bits only: the rest of the register is whatever the caller left */
+static long do_syscall(long nr, const long args[6]) {
     switch (nr) {
         case SYS_READ:            return sys_read(args[0], args[1], args[2]);
         case SYS_WRITE:           return sys_write(args[0], args[1], args[2]);
@@ -265,6 +339,12 @@ long syscall_dispatch(long nr, const long args[6]) {
         case SYS_MKNODAT:         return sys_mknodat((int)args[0], args[1], args[2], args[3]);
         case SYS_MKDIRAT:         return sys_mkdirat((int)args[0], args[1], args[2]);
         case SYS_NEWFSTATAT:      return sys_newfstatat((int)args[0], args[1], args[2], args[3]);
+        case SYS_CAPGET:          return sys_capget(args[0], args[1]);
+        case SYS_CAPSET:          return sys_capset(args[0], args[1]);
+        case SYS_WAITID:          return sys_waitid((int)args[0], (int)args[1], args[2], (int)args[3], args[4]);
+        case SYS_STATFS:          return sys_statfs(args[0], args[1]);
+        case SYS_FSTATFS:         return sys_fstatfs((int)args[0], args[1]);
+        case SYS_STATX:           return sys_statx((int)args[0], args[1], (int)args[2], args[3], args[4]);
         case SYS_SYMLINKAT:       return sys_symlinkat(args[0], (int)args[1], args[2]);
         case SYS_READLINKAT:      return sys_readlinkat((int)args[0], args[1], args[2], args[3]);
         case SYS_DUP3:            return sys_dup3(args[0], args[1], args[2]);

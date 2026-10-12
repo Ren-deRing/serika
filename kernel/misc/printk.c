@@ -33,6 +33,16 @@ notrace void vprintk(const char *fmt, va_list args) {
     stbsp_vsprintfcb(_stb_callback, NULL, buf, fmt, args);
 }
 
+int ksnprintf(char *buf, size_t n, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    int len = stbsp_vsnprintf(buf, n, fmt, args);
+
+    va_end(args);
+    return len;
+}
+
 notrace void printk(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);

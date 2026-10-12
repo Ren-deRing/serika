@@ -40,6 +40,23 @@ static long random_read(struct inode *inode, void *buf, size_t n, uint64_t pos) 
     return n;
 }
 
+/* /dev/strace: "1" turns the trace of system calls on, "0" off (kernel/syscall.c) */
+extern volatile int syscall_trace;
+
+static long strace_write(struct inode *inode, const void *buf, size_t n, uint64_t pos) {
+    (void)inode; (void)pos;
+
+    if (!n) return 0;
+
+    char c = ((const char *)buf)[0];
+
+    syscall_trace = c == '1';
+
+    return n;
+}
+
+static const struct inode_ops strace_ops = { .read = null_read, .write = strace_write };
+
 static const struct inode_ops null_ops   = { .read = null_read,   .write = null_write };
 static const struct inode_ops zero_ops   = { .read = zero_read,   .write = null_write };
 static const struct inode_ops full_ops   = { .read = zero_read,   .write = full_write };
@@ -56,6 +73,7 @@ static const struct {
     { "/dev/full",    &full_ops,   0x107 },
     { "/dev/random",  &random_ops, 0x108 },
     { "/dev/urandom", &random_ops, 0x109 },
+    { "/dev/strace",  &strace_ops, 0x1ff }, /* not linux's */
 };
 
 /* after /dev is there */

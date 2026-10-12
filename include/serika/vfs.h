@@ -44,6 +44,10 @@ struct inode_ops {
 
     /* for a device that keeps something for each open file (f->priv): these take the file, and the ones above do not.
      * open_file runs once the file exists, an error closes it; release_file runs with the last reference, before release */
+    /* a symlink that is not a path but a way to the file itself (/proc/self/fd/N): the inode it opens, referenced. an
+     * open of it that follows links gives that */
+    int      (*follow_link)(struct inode *link, struct inode **target);
+
     int      (*open_file)(struct file *f);
     void     (*release_file)(struct file *f);
     long     (*ioctl_file)(struct file *f, unsigned long cmd, unsigned long arg); /* instead of ioctl */
@@ -80,6 +84,7 @@ struct file {
     uint64_t      pos;      /* pos_lock */
     struct mutex  pos_lock; /* across a whole read or write, user copies included */
     void         *priv;     /* what open_file() of the inode's ops made */
+    char         *path;     /* as it was opened: what a path relative to a directory as a dirfd starts with, and /proc/self/fd/N reads */
 };
 
 struct cwd;
@@ -97,6 +102,9 @@ struct files {
     struct cwd   *cwd;   /* NULL: "/" */
     uint32_t      umask;
 };
+
+/* inode->dev of the file systems that are not the ramfs (0) or a disk (1, 2, ...) */
+#define VFS_DEV_PROC 100
 
 extern struct inode *vfs_root;
 extern struct inode *console_inode; /* fd 0, 1 and 2. the only tty */
@@ -144,6 +152,8 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 /* source: a block device by name ("vda", or "/dev/vda"). only "ext4", read only */
 int vfs_mount(const char *source, const char *target, const char *type);
+size_t vfs_mounts_text(char *buf, size_t cap, bool info); /* /proc/mounts, or mountinfo */
+struct inode *proc_root(void); /* the root of a procfs, referenced */
 
 struct inode *ramfs_root(void);
 struct inode *ramfs_anon_file(void); /* a file with no name: memfd, shared anonymous memory */
@@ -158,6 +168,7 @@ void initramfs_unpack(void);
 
 struct files *files_create(void); /* 0, 1 and 2 on the console */
 void files_get(struct files *files);
+size_t files_cwd(struct files *files, char *out, size_t max);
 void files_put(struct files *files);
 struct files *files_copy(struct files *old);
 int fd_install(struct files *files, struct file *f, bool cloexec, int min); /* the lowest free fd from min takes our reference */

@@ -108,6 +108,21 @@ struct file *fd_get(long fd) {
     return f;
 }
 
+/* a process's cwd, for /proc/<pid>/cwd: its length, cut to max */
+size_t files_cwd(struct files *files, char *out, size_t max) {
+    uint64_t flags = spin_lock_irqsave(&files->lock);
+
+    const char *cwd = files->cwd ? files->cwd->path : "/";
+    size_t len = strlen(cwd);
+
+    if (len > max) len = max;
+
+    memcpy(out, cwd, len);
+
+    spin_unlock_irqrestore(&files->lock, flags);
+    return len;
+}
+
 /* "name" becomes "/cwd/name" */
 static long cwd_prepend(char *buf, long len) {
     struct files *files = current_task()->files;
@@ -152,7 +167,35 @@ int path_from_kernel(const char *s, char **out) {
     return 0;
 }
 
-/* a relative path starts at the cwd. no directory fds as a start yet */
+/* "dir/rel" in buf, where buf holds rel. the length, or -errno */
+static long dirfd_prepend(char *buf, long len, long dirfd) {
+    struct file *d = fd_get(dirfd);
+    if (!d) return -EBADF;
+
+    long ret;
+
+    if (!d->path) {
+        ret = -ENOTDIR; /* not a directory, or one this kernel does not know the path of */
+    } else {
+        size_t dlen = strlen(d->path);
+        bool slash = dlen && d->path[dlen - 1] == '/'; /* "/" is a directory's path, and "//sys" is not "/sys" to a program that compares */
+        size_t gap = slash ? 0 : 1;
+
+        if (dlen + gap + len >= PATH_MAX) {
+            ret = -ENAMETOOLONG;
+        } else {
+            memmove(buf + dlen + gap, buf, len + 1);
+            memcpy(buf, d->path, dlen);
+            if (gap) buf[dlen] = '/';
+            ret = dlen + gap + len;
+        }
+    }
+
+    vfs_close(d);
+    return ret;
+}
+
+/* a relative path starts at the cwd, or at the directory dirfd is */
 int path_from_user(long dirfd, uintptr_t upath, char **out) {
     char *buf = kmalloc(PATH_MAX);
     if (!buf) return -ENOMEM;
@@ -162,12 +205,7 @@ int path_from_user(long dirfd, uintptr_t upath, char **out) {
     if (len == 0) len = -ENOENT;
 
     if (len > 0 && buf[0] != '/') {
-        if (dirfd != AT_FDCWD) {
-            printk("syscall: a path from dirfd %ld not supported -- task %lu\n", dirfd, current_task()->id);
-            len = -ENOSYS;
-        } else {
-            len = cwd_prepend(buf, len);
-        }
+        len = dirfd != AT_FDCWD ? dirfd_prepend(buf, len, dirfd) : cwd_prepend(buf, len);
     }
 
     if (len < 0) {
@@ -187,6 +225,16 @@ long sys_openat(long dirfd, long upath, long flags, long mode) {
     if (err) return err;
 
     err = vfs_open(path, flags, mode & ~current_task()->files->umask, &f);
+
+    /* a file remembers the path it was opened by: the paths relative to a directory start from it, and /proc/self/fd
+     * says where an fd leads */
+    if (!err) {
+        size_t n = strlen(path) + 1;
+
+        f->path = kmalloc(n);
+        if (f->path) memcpy(f->path, path, n);
+    }
+
     kfree(path);
     if (err) return err;
 
@@ -418,6 +466,168 @@ long sys_newfstatat(long dirfd, long upath, long ubuf, long flags) {
     vfs_close(f);
 
     return copy_to_user(ubuf, &st, sizeof(st));
+}
+
+/* statfs: what kind of file system a file is on. systemd's libraries ask of /sys whether it is sysfs. the ramfs is
+ * what the sysfs, procfs, devtmpfs and tmpfs of linux are here, so the directories' paths tell: a file with none is
+ * the ext4 if it has a device number, else a ramfs */
+struct statfs_user {
+    int64_t f_type;
+    int64_t f_bsize;
+    int64_t f_blocks;
+    int64_t f_bfree;
+    int64_t f_bavail;
+    int64_t f_files;
+    int64_t f_ffree;
+    int32_t f_fsid[2];
+    int64_t f_namelen;
+    int64_t f_frsize;
+    int64_t f_flags;
+    int64_t f_spare[4];
+};
+
+_Static_assert(sizeof(struct statfs_user) == 120, "statfs");
+
+#define SYSFS_MAGIC     0x62656572
+#define PROC_SUPER_MAGIC 0x9fa0
+#define TMPFS_MAGIC     0x01021994
+#define RAMFS_MAGIC     0x858458f6
+#define EXT4_SUPER_MAGIC 0xef53
+
+static bool path_in(const char *path, const char *dir) {
+    size_t n = strlen(dir);
+
+    while (path[0] == '/' && path[1] == '/') path++; /* "//sys" */
+
+    return strncmp(path, dir, n) == 0 && (path[n] == 0 || path[n] == '/');
+}
+
+static long statfs_of(struct inode *inode, const char *path, long ubuf) {
+    struct statfs_user st;
+
+    memset(&st, 0, sizeof(st));
+
+    if (inode->dev == VFS_DEV_PROC)     st.f_type = PROC_SUPER_MAGIC;
+    else if (inode->dev)                st.f_type = EXT4_SUPER_MAGIC;
+    else if (path && path_in(path, "/sys"))  st.f_type = SYSFS_MAGIC;
+    else if (path && path_in(path, "/proc")) st.f_type = PROC_SUPER_MAGIC;
+    else if (path && (path_in(path, "/dev") || path_in(path, "/run") || path_in(path, "/tmp"))) st.f_type = TMPFS_MAGIC;
+    else                                st.f_type = RAMFS_MAGIC;
+
+    st.f_bsize   = PAGE_SIZE;
+    st.f_frsize  = PAGE_SIZE;
+    st.f_namelen = NAME_MAX;
+
+    return copy_to_user(ubuf, &st, sizeof(st));
+}
+
+long sys_fstatfs(long fd, long ubuf) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    long err = statfs_of(f->inode, f->path, ubuf);
+
+    vfs_close(f);
+    return err;
+}
+
+long sys_statfs(long upath, long ubuf) {
+    char *path;
+    struct file *f;
+
+    int err = path_from_user(AT_FDCWD, upath, &path);
+    if (err) return err;
+
+    err = vfs_open(path, O_PATH, 0, &f);
+
+    long ret = err ? err : statfs_of(f->inode, path, ubuf);
+
+    if (!err) vfs_close(f);
+
+    kfree(path);
+    return ret;
+}
+
+/* statx: the same, in the layout glibc and its callers (libseat, systemd's libraries) use */
+struct statx_timestamp {
+    int64_t  tv_sec;
+    uint32_t tv_nsec;
+    int32_t  pad;
+};
+
+struct statx {
+    uint32_t stx_mask;
+    uint32_t stx_blksize;
+    uint64_t stx_attributes;
+    uint32_t stx_nlink;
+    uint32_t stx_uid;
+    uint32_t stx_gid;
+    uint16_t stx_mode;
+    uint16_t pad1;
+    uint64_t stx_ino;
+    uint64_t stx_size;
+    uint64_t stx_blocks;
+    uint64_t stx_attributes_mask;
+    struct statx_timestamp stx_atime, stx_btime, stx_ctime, stx_mtime;
+    uint32_t stx_rdev_major, stx_rdev_minor, stx_dev_major, stx_dev_minor;
+    uint64_t spare[14];
+};
+
+_Static_assert(sizeof(struct statx) == 256, "statx");
+
+#define STATX_BASIC_STATS 0x7ff /* all but the birth time, which no file has */
+#define STATX_MNT_ID        0x1000
+#define STATX_MNT_ID_UNIQUE 0x4000
+
+long sys_statx(long dirfd, long upath, long flags, long mask, long ubuf) {
+    char *path, first;
+    struct file *f;
+    struct inode *inode;
+
+    if ((flags & AT_EMPTY_PATH) && strncpy_from_user(&first, upath, 1) == 0) {
+        f = fd_get(dirfd);
+        if (!f) return -EBADF;
+    } else {
+        int err = path_from_user(dirfd, upath, &path);
+        if (err) return err;
+
+        err = vfs_open(path, O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0), 0, &f);
+        kfree(path);
+        if (err) return err;
+    }
+
+    inode = f->inode;
+
+    struct stat st;
+    fill_stat(inode, &st);
+
+    struct statx sx;
+    memset(&sx, 0, sizeof(sx));
+
+    sx.stx_mask        = STATX_BASIC_STATS;
+    sx.stx_blksize     = st.st_blksize;
+    sx.stx_nlink       = st.st_nlink;
+    sx.stx_mode        = st.st_mode;
+    sx.stx_ino         = st.st_ino;
+    sx.stx_size        = st.st_size;
+    sx.stx_blocks      = st.st_blocks;
+    sx.stx_atime       = (struct statx_timestamp){ st.st_atime, st.st_atime_nsec, 0 };
+    sx.stx_ctime       = (struct statx_timestamp){ st.st_ctime, st.st_ctime_nsec, 0 };
+    sx.stx_mtime       = (struct statx_timestamp){ st.st_mtime, st.st_mtime_nsec, 0 };
+    sx.stx_rdev_major  = st.st_rdev >> 8;
+    sx.stx_rdev_minor  = st.st_rdev & 0xff;
+    sx.stx_dev_minor   = st.st_dev;
+
+    /* which mount it is on: the number of its file system. systemd's libraries ask, and go through several other ways
+     * if they are not told (one of them is /proc) */
+    if (mask & (STATX_MNT_ID | STATX_MNT_ID_UNIQUE)) {
+        sx.spare[0] = st.st_dev; /* stx_mnt_id */
+        sx.stx_mask |= (mask & STATX_MNT_ID_UNIQUE) ? STATX_MNT_ID_UNIQUE : STATX_MNT_ID;
+    }
+
+    vfs_close(f);
+
+    return copy_to_user(ubuf, &sx, sizeof(sx));
 }
 
 /* the device's own: a tty answers termios, the window, the foreground */
