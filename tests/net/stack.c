@@ -6,6 +6,7 @@
 #include <serika/timer.h>
 
 #include <asm/arch.h>
+#include <serika/cpu.h>
 #include <tests/test.h>
 
 /* the ipv4 base: a ping to ourselves through lo, and (with a NIC, QEMU's user network) ARP and a ping to the gateway */
@@ -93,5 +94,46 @@ bool test_net_ping_gw() {
 
     /* our own address is answered on lo */
     TEST_ASSERT(icmp_ping(dev->ip, 1000, &rtt) == 0);
+    return true;
+}
+
+/* sockets of the kernel's own on lo: a datagram there and back, the port taken, nobody at a port, a wait that runs out */
+bool test_net_udp() {
+    struct isock *a = udp_open(), *b = udp_open(), *c = udp_open();
+    char buf[64];
+    uint32_t saddr = 0;
+    uint16_t sport = 0;
+
+    TEST_ASSERT(a && b && c);
+
+    TEST_ASSERT(udp_bind_k(a, IP4(127, 0, 0, 1), 7000) == 0);
+    TEST_ASSERT(udp_bind_k(b, 0, 0) == 0 && b->lport >= UDP_PORT_FIRST);
+    TEST_ASSERT(udp_bind_k(c, 0, 7000) == -EADDRINUSE);
+    TEST_ASSERT(udp_bind_k(c, IP4(8, 8, 8, 8), 0) == -EADDRNOTAVAIL);
+
+    TEST_ASSERT(udp_send_k(b, IP4(127, 0, 0, 1), 7000, "ping", 4) == 0);
+    TEST_ASSERT(udp_recv_k(a, buf, sizeof(buf), &saddr, &sport, 1000) == 4 && memcmp(buf, "ping", 4) == 0);
+    TEST_ASSERT(saddr == IP4(127, 0, 0, 1) && sport == b->lport);
+
+    /* back to where it came from */
+    TEST_ASSERT(udp_send_k(a, saddr, sport, "pong", 4) == 0);
+    TEST_ASSERT(udp_recv_k(b, buf, sizeof(buf), NULL, NULL, 1000) == 4 && memcmp(buf, "pong", 4) == 0);
+
+    /* nobody at the port: the sender is told by ICMP and nothing is queued; nothing to read is a wait that runs out */
+    TEST_ASSERT(udp_send_k(b, IP4(127, 0, 0, 1), 7001, "x", 1) == 0);
+    TEST_ASSERT(udp_recv_k(b, buf, sizeof(buf), NULL, NULL, 200) == -ETIMEDOUT);
+
+    TEST_ASSERT(udp_send_k(b, IP4(127, 0, 0, 1), 7000, buf, UDP_MAX + 1) == -EMSGSIZE);
+    TEST_ASSERT(udp_send_k(b, IP4(127, 0, 0, 1), 0, "x", 1) == -EINVAL);
+
+    udp_close(a);
+    udp_close(b);
+    udp_close(c);
+
+    /* the port is free again */
+    struct isock *d = udp_open();
+
+    TEST_ASSERT(d && udp_bind_k(d, 0, 7000) == 0);
+    udp_close(d);
     return true;
 }

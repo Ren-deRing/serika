@@ -10,3 +10,12 @@ bool test_exec_sockets() {
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }
+
+/* AF_INET and UDP, through glibc: names, datagrams, peek and truncation, connect, options, the interfaces, and with a NIC the DNS server */
+bool test_exec_udp() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/udp", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

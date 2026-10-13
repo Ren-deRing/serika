@@ -2,6 +2,7 @@
 
 #include <serika/list.h>
 #include <serika/mutex.h>
+#include <serika/socket.h>
 #include <serika/wait.h>
 
 #include <stdbool.h>
@@ -33,7 +34,9 @@ struct nbuf {
     struct netdev *dev;      /* the interface it came in on or goes out of */
     uint8_t       *data;     /* the first byte of the packet as it is now */
     uint32_t       len;
-    uint8_t        buf[NBUF_TOTAL - 40];
+    uint32_t       addr;     /* a datagram waiting in a socket: whose it is (host order) */
+    uint16_t       port;
+    uint8_t        buf[NBUF_TOTAL - 48];
 };
 
 _Static_assert(sizeof(struct nbuf) == NBUF_TOTAL, "an nbuf is one 2 KiB object");
@@ -104,6 +107,32 @@ extern struct wait_queue net_wq;
         __ret;                                                  \
     })
 
+/* the same, and a signal ends it: -ERESTARTSYS */
+#define net_wait_intr(cond, deadline)                           \
+    ({                                                          \
+        struct wait_entry __we = { 0 };                         \
+        int __ret = 0;                                          \
+                                                                \
+        for (;;) {                                              \
+            prepare_to_wait(&net_wq, &__we);                    \
+            if (cond) break;                                    \
+            if (signal_pending(current_task())) {               \
+                __ret = -ERESTARTSYS;                           \
+                break;                                          \
+            }                                                   \
+            if (rdtsc() >= (deadline)) {                        \
+                __ret = -ETIMEDOUT;                             \
+                break;                                          \
+            }                                                   \
+            mutex_unlock(&net_lock);                            \
+            schedule();                                         \
+            mutex_lock(&net_lock);                              \
+        }                                                       \
+                                                                \
+        finish_wait(&net_wq, &__we);                            \
+        __ret;                                                  \
+    })
+
 uint64_t net_ms_to_tsc(uint32_t ms);         /* from now */
 
 /* ---- Ethernet ---- */
@@ -132,6 +161,7 @@ bool arp_lookup(uint32_t ip, uint8_t mac[ETH_ALEN]); /* only a known one */
 /* ---- IPv4 ---- */
 
 #define IPPROTO_ICMP 1
+#define IPPROTO_UDP  17
 
 struct ip_hdr {
     uint8_t  ver_ihl;
@@ -148,9 +178,14 @@ struct ip_hdr {
 #define IP_HLEN 20
 #define IP_DF   0x4000
 
-uint16_t net_csum(const void *data, size_t len, uint32_t sum); /* the Internet checksum, in network order; sum: carried from before */
+uint32_t net_csum_add(const void *data, size_t len, uint32_t sum); /* the sum of the words, not folded: what a pseudo header is */
+uint16_t net_csum(const void *data, size_t len, uint32_t sum);     /* the Internet checksum, in network order; sum: carried from before */
 
 void ip_rx(struct netdev *dev, struct nbuf *n);
+
+/* the address that ip_tx() would send from to dst. 0: no route */
+uint32_t ip_src_for(uint32_t dst);
+bool     ip_is_local(uint32_t ip);
 
 /* src 0: that of the interface the route is through. n is the payload; takes it. -EHOSTUNREACH: no route */
 int ip_tx(uint32_t src, uint32_t dst, uint8_t proto, struct nbuf *n);
@@ -172,6 +207,65 @@ void icmp_rx(struct netdev *dev, uint32_t src, uint32_t dst, struct nbuf *n);
 
 /* an echo request and its reply. 0 and the round trip in microseconds, or -ETIMEDOUT, -EHOSTUNREACH. takes net_lock, may sleep */
 int icmp_ping(uint32_t dst, uint32_t timeout_ms, uint32_t *rtt_us);
+
+/* an error for a packet that could not be delivered: type and code, and the packet's IP header and first 8 bytes. net_lock held */
+#define ICMP_DEST_UNREACH 3
+#define ICMP_PORT_UNREACH 3
+void icmp_error(uint8_t type, uint8_t code, const struct ip_hdr *orig);
+
+/* ---- UDP ---- */
+
+struct udp_hdr {
+    uint16_t sport, dport;
+    uint16_t len;             /* header and data */
+    uint16_t csum;
+} __attribute__((packed));
+
+#define UDP_HLEN   8
+#define UDP_MAX    (1500 - IP_HLEN - UDP_HLEN)   /* a datagram is never cut in pieces */
+#define UDP_RCVBUF 212992
+#define UDP_PORT_FIRST 49152
+
+/* an AF_INET socket. all of it is under net_lock, which is also what a waiter lets go of */
+struct isock {
+    struct sock sock;
+    int         type;         /* SOCK_DGRAM */
+    int         protocol;
+    list_node   node;         /* the table of the protocol while it is bound */
+    bool        bound, connected, rx_shut, tx_shut;
+    uint32_t    laddr, raddr; /* host order. laddr 0: any */
+    uint16_t    lport, rport;
+
+    list_node   rx;           /* nbufs: addr and port are the sender's */
+    size_t      rx_bytes;
+    int         rcvbuf, sndbuf;
+    uint64_t    rcvtimeo, sndtimeo; /* tsc ticks. 0: none */
+    uint32_t    flags;        /* a bit for each option that is only given back: 1 << SO_x */
+};
+
+void udp_rx(struct netdev *dev, const struct ip_hdr *iph, struct nbuf *n);
+
+/* net_lock held. the port 0 is any. -EADDRINUSE, -EADDRNOTAVAIL */
+int  udp_bind(struct isock *sk, uint32_t addr, uint16_t port);
+int  udp_send(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, size_t len);
+/* the next datagram into buf (cap bytes: the rest is lost, *full says how long it was); waits to the deadline unless
+ * nonblock. the length copied, or -errno. 0 with peek leaves it queued */
+long udp_recv(struct isock *sk, void *buf, size_t cap, size_t *full, uint32_t *saddr, uint16_t *sport, bool peek,
+              bool nonblock, uint64_t deadline);
+void udp_unbind(struct isock *sk);
+uint32_t udp_poll(struct isock *sk);
+
+/* ---- inet sockets (net/inet.c) ---- */
+
+struct isock *isock_new(int type, int protocol);
+struct sock  *inet_create(int type, int protocol, int *err);
+
+/* the kernel's own use of UDP (DHCP). these take net_lock */
+struct isock *udp_open(void);
+void udp_close(struct isock *sk);
+int  udp_bind_k(struct isock *sk, uint32_t addr, uint16_t port);
+int  udp_send_k(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, size_t len);
+long udp_recv_k(struct isock *sk, void *buf, size_t cap, uint32_t *saddr, uint16_t *sport, uint32_t timeout_ms);
 
 /* ---- drivers ---- */
 

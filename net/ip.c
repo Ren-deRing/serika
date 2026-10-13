@@ -7,7 +7,7 @@
 
 #define IP_TTL 64
 
-uint16_t net_csum(const void *data, size_t len, uint32_t sum) {
+uint32_t net_csum_add(const void *data, size_t len, uint32_t sum) {
     const uint8_t *p = data;
 
     /* words as they are in memory: the sum does not depend on the byte order, and comes out in the one of the packet */
@@ -15,12 +15,18 @@ uint16_t net_csum(const void *data, size_t len, uint32_t sum) {
 
     if (len) sum += *p;
 
+    return sum;
+}
+
+uint16_t net_csum(const void *data, size_t len, uint32_t sum) {
+    sum = net_csum_add(data, len, sum);
+
     while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
 
     return (uint16_t)~sum;
 }
 
-static bool is_local(uint32_t ip) {
+bool ip_is_local(uint32_t ip) {
     for (struct netdev *d = netdev_first(); d; d = d->next)
         if (d->ip == ip) return true;
 
@@ -55,6 +61,7 @@ void ip_rx(struct netdev *dev, struct nbuf *n) {
 
     switch (h->proto) {
     case IPPROTO_ICMP: icmp_rx(dev, src, dst, n); return;
+    case IPPROTO_UDP:  udp_rx(dev, h, n); return;
     default: break;
     }
 
@@ -62,17 +69,17 @@ drop:
     nbuf_free(n);
 }
 
-int ip_tx(uint32_t src, uint32_t dst, uint8_t proto, struct nbuf *n) {
-    static uint16_t next_id;
-
+/* the way to dst: the interface, the next hop, and the address to send from. false: there is none */
+static bool route(uint32_t dst, struct netdev **devp, uint32_t *nexthop, uint32_t *src) {
     struct netdev *dev = NULL;
-    uint32_t nexthop = dst;
 
-    if ((dst >> 24) == 127 || is_local(dst)) {
+    *nexthop = dst;
+
+    if ((dst >> 24) == 127 || ip_is_local(dst)) {
         dev = loopback();
 
         /* from the address that was asked for: 127.0.0.1 to itself, an interface's own address to itself */
-        if (!src) src = (dst >> 24) == 127 && dev ? dev->ip : dst;
+        *src = (dst >> 24) == 127 && dev ? dev->ip : dst;
     } else {
         /* on the link of an interface, or through the gateway of one */
         for (struct netdev *d = netdev_first(); d && !dev; d = d->next)
@@ -81,24 +88,45 @@ int ip_tx(uint32_t src, uint32_t dst, uint8_t proto, struct nbuf *n) {
         for (struct netdev *d = netdev_first(); d && !dev; d = d->next) {
             if (!(d->flags & NETDEV_LOOPBACK) && d->gw) {
                 dev = d;
-                nexthop = d->gw;
+                *nexthop = d->gw;
             }
         }
 
         if (dst == 0xffffffffU) {
+            dev = NULL;
+
             for (struct netdev *d = netdev_first(); d && !dev; d = d->next)
                 if (!(d->flags & NETDEV_LOOPBACK)) dev = d;
 
-            nexthop = dst;
+            *nexthop = dst;
         }
 
-        if (dev && !src) src = dev->ip;
+        *src = dev ? dev->ip : 0;
     }
 
-    if (!dev || !(dev->flags & NETDEV_UP)) {
+    *devp = dev;
+    return dev && (dev->flags & NETDEV_UP);
+}
+
+uint32_t ip_src_for(uint32_t dst) {
+    struct netdev *dev;
+    uint32_t nexthop, src;
+
+    return route(dst, &dev, &nexthop, &src) ? src : 0;
+}
+
+int ip_tx(uint32_t src, uint32_t dst, uint8_t proto, struct nbuf *n) {
+    static uint16_t next_id;
+
+    struct netdev *dev;
+    uint32_t nexthop, from;
+
+    if (!route(dst, &dev, &nexthop, &from)) {
         nbuf_free(n);
         return -EHOSTUNREACH;
     }
+
+    if (!src) src = from;
 
     struct ip_hdr *h = nbuf_push(n, IP_HLEN);
 

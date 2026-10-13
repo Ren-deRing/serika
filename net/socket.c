@@ -3,6 +3,7 @@
 #include <serika/errno.h>
 #include <serika/fcntl.h>
 #include <serika/mm.h>
+#include <serika/net.h>
 #include <serika/page.h>
 #include <serika/poll.h>
 #include <serika/signal.h>
@@ -209,15 +210,27 @@ static int check_type(long domain, long type, long protocol) {
 }
 
 long sys_socket(long domain, long type, long protocol) {
-    int t = check_type(domain, type, protocol);
-    if (t < 0) return t;
+    struct sock *sk;
 
-    struct usock *sk = unix_create(t);
-    if (!sk) return -ENOMEM;
+    if (domain == AF_INET) {
+        if (type & ~(SOCK_TYPE_MASK | SOCK_NONBLOCK | SOCK_CLOEXEC)) return -EINVAL;
 
-    sk->netlink = domain == AF_NETLINK;
+        int err;
 
-    struct file *f = sock_file_new(&sk->sock, type);
+        sk = inet_create(type & SOCK_TYPE_MASK, protocol, &err);
+        if (!sk) return err;
+    } else {
+        int t = check_type(domain, type, protocol);
+        if (t < 0) return t;
+
+        struct usock *usk = unix_create(t);
+        if (!usk) return -ENOMEM;
+
+        usk->netlink = domain == AF_NETLINK;
+        sk = &usk->sock;
+    }
+
+    struct file *f = sock_file_new(sk, type);
     if (!f) return -ENOMEM;
 
     int fd = fd_install(current_task()->files, f, type & SOCK_CLOEXEC, 0);

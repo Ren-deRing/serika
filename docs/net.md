@@ -93,3 +93,35 @@ answered, and the sender of any packet that speaks to us is learned.
 IPv4 checks the version, the header length, the total length and the checksum; takes what is for the interface's address,
 the broadcasts, or anything on `lo`; there is no forwarding. A fragment is dropped, and none is sent (DF is set, the TTL
 is 64). `icmp_ping()` sends an echo request and waits for the reply (one at a time); an echo request to us is answered.
+
+# Sockets and UDP
+
+## The kinds of sockets
+
+`socket.h` has `struct proto_ops`, the calls of `socket(2)` (bind, connect, listen, accept, getname, shutdown, sendmsg,
+recvmsg, setsockopt, getsockopt) and the file's own (read, write, poll, ioctl, release, put). Every kind of socket
+starts with a `struct sock { ops }` and the inode of a socket points to it. `net/socket.c` is the system calls, which
+find the file's socket and call its ops, and the unix kind (`unix_op_*`, `unix_proto_ops`); `net/inet.c` is the
+`AF_INET` kind (`inet_proto_ops`). `socket(AF_INET, SOCK_DGRAM, 0 or IPPROTO_UDP)` makes a UDP socket; `SOCK_STREAM`
+and `SOCK_RAW` are `ESOCKTNOSUPPORT` until TCP.
+
+## UDP
+
+A socket is a `struct isock`, all of it under `net_lock`. A waiter (`recv`) lets the lock go in `net_wait_intr()`, which a
+signal ends (`-ERESTARTSYS`) and `SO_RCVTIMEO` limits. No lock is held across a copy to or from user memory: the
+datagram is copied to a kernel buffer and out after. Bound sockets are in one list; a datagram goes to the socket that
+fits best (connected before bound, an address before any). `bind` to port 0 takes a port from 49152 up;
+`EADDRINUSE` for a port that overlaps one in use unless both have `SO_REUSEADDR`. A datagram is one IP packet,
+1472 bytes at most (`EMSGSIZE`). The checksum (with the pseudo header) is made and checked, a datagram with a bad one is
+dropped, a datagram to a port nobody has is answered by ICMP port unreachable (the error does not reach any socket:
+TODO). A queue holds `SO_RCVBUF` bytes (212992), the rest is dropped. A broadcast needs `SO_BROADCAST`. Not here:
+multicast, `MSG_ERRQUEUE`, `IP_PKTINFO` (the IP options that glibc's resolver sets are taken and not used).
+
+The kernel uses UDP too (DHCP): `udp_open()`, `udp_bind_k()`, `udp_send_k()`, `udp_recv_k()`, `udp_close()` (with
+`net_lock` taken inside).
+
+## Interfaces
+
+`SIOCGIFCONF`, `SIOCGIFNAME`, `SIOCGIFFLAGS`, `SIOCSIFFLAGS` (up and down), `SIOCGIFADDR`, `SIOCSIFADDR`,
+`SIOCGIFNETMASK`, `SIOCSIFNETMASK`, `SIOCGIFBRDADDR`, `SIOCGIFMTU`, `SIOCGIFHWADDR` and `SIOCGIFINDEX` on any socket.
+The list of interfaces for `getifaddrs()` and `ip` is netlink, later.

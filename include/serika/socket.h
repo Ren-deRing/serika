@@ -10,6 +10,7 @@
 
 /* linux's values: this is the abi */
 #define AF_UNIX  1
+#define AF_INET  2
 #define AF_NETLINK 16
 #define NETLINK_KOBJECT_UEVENT 15
 #define AF_LOCAL 1

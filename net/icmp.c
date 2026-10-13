@@ -95,3 +95,30 @@ out:
     mutex_unlock(&net_lock);
     return err;
 }
+
+/* the packet that could not be delivered is told with its header and the first 8 bytes of its data */
+void icmp_error(uint8_t type, uint8_t code, const struct ip_hdr *orig) {
+    uint32_t hlen = (orig->ver_ihl & 0xf) * 4;
+    uint32_t src = ntohl(orig->src);
+
+    /* never to a broadcast or from a source that is not one host's, never about an ICMP error */
+    if (src == 0 || src == 0xffffffffU || (src >> 28) == 0xe) return;
+    if (orig->proto == IPPROTO_ICMP) return;
+
+    struct nbuf *n = nbuf_alloc();
+    if (!n) return;
+
+    struct icmp_hdr *h = nbuf_put(n, sizeof(*h));
+
+    h->type = type;
+    h->code = code;
+    h->csum = 0;
+    h->id   = 0;      /* the unused word */
+    h->seq  = 0;
+
+    memcpy(nbuf_put(n, hlen + 8), orig, hlen + 8);
+
+    h->csum = net_csum(h, n->len, 0);
+
+    ip_tx(0, src, IPPROTO_ICMP, n);
+}
