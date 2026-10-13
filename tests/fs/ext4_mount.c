@@ -124,9 +124,9 @@ bool test_ext4_umount() {
     char buf[32];
     uint64_t pos = 0;
 
-    TEST_ASSERT(vfs_open("/mnt/hello.txt", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(vfs_open("/mnt/many/an-entry-with-a-long-name-0100", O_RDONLY, 0, &f) == 0);
     TEST_ASSERT(vfs_umount("/mnt") == -EBUSY);
-    TEST_ASSERT(kernel_read(f, buf, 5, &pos) == 5);           /* and it works */
+    TEST_ASSERT(kernel_read(f, buf, 5, &pos) == 5 && memcmp(buf, "entry", 5) == 0);   /* and it works */
     vfs_close(f);
 
     TEST_ASSERT(vfs_open("/mnt/many/an-entry-with-a-long-name-0100", O_RDONLY, 0, &f) == 0);
@@ -139,8 +139,8 @@ bool test_ext4_umount() {
 
     TEST_ASSERT(ext4_test_mount());                           /* again: the same disk, the same files */
     pos = 0;
-    TEST_ASSERT(vfs_open("/mnt/hello.txt", O_RDONLY, 0, &f) == 0);
-    TEST_ASSERT(kernel_read(f, buf, 5, &pos) == 5 && memcmp(buf, "hello", 5) == 0);
+    TEST_ASSERT(vfs_open("/mnt/many/an-entry-with-a-long-name-0100", O_RDONLY, 0, &f) == 0);
+    TEST_ASSERT(kernel_read(f, buf, 5, &pos) == 5 && memcmp(buf, "entry", 5) == 0);
     vfs_close(f);
     return true;
 }

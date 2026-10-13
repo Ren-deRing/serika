@@ -8,7 +8,7 @@
 
 #include <tests/test.h>
 
-/* /usr is the disk (an ext4) when there is one: files, a dir, a link, the way back up, and nothing can be changed */
+/* /usr is the disk (an ext4) when there is one: files, a dir, a link, the way back up, and nothing changed */
 bool test_ext4_read() {
     struct file *f, *g;
     uint64_t pos;
@@ -97,12 +97,14 @@ bool test_ext4_read() {
     TEST_ASSERT(found && names > 10);
     vfs_close(f);
 
-    /* not there, and not changeable */
+    /* not there, and what is there is not made again: the disk is not changed by this test (those that change an ext4 are on
+     * the test disk) */
     TEST_ASSERT(vfs_open("/usr/nope", O_RDONLY, 0, &f) == -ENOENT);
     TEST_ASSERT(vfs_open("/usr/hello.txt/x", O_RDONLY, 0, &f) == -ENOTDIR);
-    TEST_ASSERT(vfs_open("/usr/new", O_RDWR | O_CREAT, 0644, &f) == -EROFS);
-    TEST_ASSERT(vfs_mkdir("/usr/dir", 0755) == -EROFS);
-    TEST_ASSERT(vfs_unlink("/usr/hello.txt") == -EROFS);
+    TEST_ASSERT(vfs_open("/usr/hello.txt", O_RDWR | O_CREAT | O_EXCL, 0644, &f) == -EEXIST);
+    TEST_ASSERT(vfs_mkdir("/usr/bin", 0755) == -EEXIST);
+    TEST_ASSERT(vfs_unlink("/usr/nope") == -ENOENT);
+    TEST_ASSERT(vfs_rmdir("/usr/nope") == -ENOENT);
     TEST_ASSERT(vfs_mount("sda", "/usr", "ext4") == -EBUSY);
     return true;
 }

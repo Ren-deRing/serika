@@ -62,8 +62,13 @@ struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode) {
     return inode;
 }
 
+void inode_dirty(struct inode *inode) {
+    if (inode->ops->mark_dirty) inode->ops->mark_dirty(inode);
+}
+
 void inode_touch(struct inode *inode) {
     inode->mtime = inode->ctime = realtime_ns();
+    inode_dirty(inode);
 }
 
 void iget(struct inode *inode) {
@@ -528,6 +533,7 @@ static int entry_get(const char *path, struct entry *e, int dots_err) {
 static void drop_link(struct inode *inode) {
     mutex_lock(&inode->lock);
     if (inode->nlink) inode->nlink--;
+    inode_dirty(inode);
     mutex_unlock(&inode->lock);
 
     iput(inode);
@@ -701,6 +707,7 @@ int vfs_chmod(struct inode *inode, uint32_t mode) {
     mutex_lock(&inode->lock);
     inode->mode = (inode->mode & S_IFMT) | (mode & 07777);
     inode->ctime = realtime_ns();
+    inode_dirty(inode);
     mutex_unlock(&inode->lock);
 
     return 0;
@@ -753,6 +760,7 @@ int vfs_utimes(struct inode *inode, int64_t atime_ns, int64_t mtime_ns) {
     if (mtime_ns != UTIME_OMIT) inode->mtime = mtime_ns == UTIME_NOW ? now : (uint64_t)mtime_ns;
 
     inode->ctime = now;
+    inode_dirty(inode);
 
     mutex_unlock(&inode->lock);
     return 0;

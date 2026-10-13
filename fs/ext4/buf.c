@@ -178,3 +178,28 @@ void ext4_bfree(struct ext4_sb *sb) {
         }
     }
 }
+
+/* the block was freed: what the cache has of it must not be written over whatever the block becomes */
+void ext4_bforget(struct ext4_sb *sb, uint64_t blk) {
+    list_node *head = &sb->bcache[blk % EXT4_BCACHE_BUCKETS];
+
+    mutex_lock(&sb->bcache_lock);
+
+    for (list_node *n = head->next; n != head; n = n->next) {
+        struct bcache_entry *e = container_of(n, struct bcache_entry, node);
+
+        if (e->blk != blk) continue;
+
+        if (e->is_dirty) {
+            list_del(&e->dirty);
+            sb->ndirty--;
+        }
+
+        list_del(&e->node);
+        free_pages((void *)V2P((uintptr_t)e->data), 0);
+        kfree(e);
+        break;
+    }
+
+    mutex_unlock(&sb->bcache_lock);
+}

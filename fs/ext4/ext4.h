@@ -44,6 +44,14 @@
 #define EXT4_CSUM_CRC32C 1
 
 #define EXT4_INODE_EXTENTS_FL 0x00080000
+#define EXT4_INODE_INDEX_FL   0x00001000                /* the dir has an htree index */
+#define EXT4_LINK_MAX         65000
+#define EXT4_INODE_HUGE_FILE_FL 0x00040000
+
+#define EXT4_PG_DIRTY 1UL                       /* bit 0 of the frame in the tree: the page is not written yet */
+#define PG(x) ((x) & ~EXT4_PG_DIRTY)
+#define EXT4_FILE_MAX (1ULL << 44)              /* 16 TiB: the blocks of a file are numbered with 32 bits */
+#define EXT4_DIRTY_PAGES_MAX 8192               /* pages not written, of all files: past this a writer writes its own */
 
 #define EXT4_EXT_MAGIC 0xf30a
 
@@ -81,7 +89,9 @@ struct ext4_super {
     uint32_t feature_ro_compat;
     uint8_t  uuid[16];
     char     volume_name[16];
-    uint8_t  more[0xec - 0x88];
+    uint8_t  more[0xce - 0x88];
+    uint16_t reserved_gdt_blocks;
+    uint8_t  more_b[0xec - 0xd0];
     uint32_t hash_seed[4];       /* htree */
     uint8_t  def_hash_version;
     uint8_t  jnl_backup_type;
@@ -102,6 +112,7 @@ _Static_assert(__builtin_offsetof(struct ext4_super, magic) == 0x38, "ext4_super
 _Static_assert(__builtin_offsetof(struct ext4_super, inode_size) == 0x58, "ext4_super inode_size");
 _Static_assert(__builtin_offsetof(struct ext4_super, feature_incompat) == 0x60, "ext4_super feature_incompat");
 _Static_assert(__builtin_offsetof(struct ext4_super, volume_name) == 0x78, "ext4_super volume_name");
+_Static_assert(__builtin_offsetof(struct ext4_super, reserved_gdt_blocks) == 0xce, "ext4_super reserved_gdt_blocks");
 _Static_assert(__builtin_offsetof(struct ext4_super, hash_seed) == 0xec, "ext4_super hash_seed");
 _Static_assert(__builtin_offsetof(struct ext4_super, desc_size) == 0xfe, "ext4_super desc_size");
 _Static_assert(__builtin_offsetof(struct ext4_super, blocks_count_hi) == 0x150, "ext4_super blocks_count_hi");
@@ -236,6 +247,10 @@ struct ext4_sb {
     struct mutex meta_lock;   /* a metadata block is changed with it held; bitmaps, group descriptors, the counters */
     list_node    dirty_list;  /* the blocks of the cache that are changed and not written (bcache_lock) */
     unsigned     ndirty;
+    bool         super_dirty;  /* the free counters changed: the super block goes with the next sync (meta_lock) */
+    spinlock_t   dirty_lock;
+    list_node    dirty_inodes; /* the ext4_info that have something to write (dirty_lock) */
+    unsigned long ndirty_pages; /* pages of files not written yet: atomic */
 
     /* the block cache: a block that was read stays. every block is a page of its own, and the page is mapped */
     struct mutex bcache_lock;
@@ -253,10 +268,14 @@ struct ext4_info {
     uint32_t        flags;
     uint32_t        generation;
     uint32_t        seed;   /* the checksum seed of this inode (blocks of extents and entries use it), 0 without metadata_csum */
+    list_node       dirty;        /* on sb->dirty_inodes; linked to itself when it is not */
+    bool            inode_dirty;  /* the inode has to be written */
+    unsigned        ndirty;       /* pages of the file that are dirty */
+    uint64_t        nblocks;      /* i_blocks: 512 byte units, the data and the extent tree's own blocks */
     uint32_t        block[15];
 
-    uintptr_t      *pages;  /* the file's pages that were read: phys of each, 0 for not yet. buddy memory */
-    size_t          npages;
+    uintptr_t       root;   /* the file's pages that are in the cache: a radix tree (pages.c). phys of the top node */
+    unsigned        height; /* its levels; 0: no pages */
 };
 
 /* buf.c */
@@ -270,23 +289,27 @@ const void *ext4_bread_kind(struct ext4_sb *sb, uint64_t blk, enum ext4_bkind ki
 void *ext4_bdirty(struct ext4_sb *sb, uint64_t blk, enum ext4_bkind kind, uint32_t seed); /* the block to change, on the dirty list. NULL: the disk failed, or its checksum */
 void *ext4_bnew(struct ext4_sb *sb, uint64_t blk, enum ext4_bkind kind, uint32_t seed);   /* a block that is allocated now: zeros, not read; dirty */
 void  ext4_bfree(struct ext4_sb *sb);        /* every block of the cache: the pages and the entries. nothing is using the fs */
+void  ext4_bforget(struct ext4_sb *sb, uint64_t blk);        /* the block was freed: the cache must not write it any more */
 int   ext4_bflush(struct ext4_sb *sb);        /* the dirty blocks to the disk, checksums made; the disk's own cache is not flushed */
 
 /* super.c */
 struct inode *ext4_iget(struct ext4_sb *sb, uint32_t ino); /* referenced; NULL: no such inode, or damaged */
 struct inode *ext4_mount(struct blkdev *dev);              /* the root, referenced. NULL: not an ext4 we can read */
 void ext4_evict(struct inode *inode);
+int  ext4_inode_loc(struct ext4_sb *sb, uint32_t ino, uint64_t *blk, uint32_t *off); /* where the inode is on the disk */
 int  ext4_umount(struct inode *root); /* root: the mounted root, with the mount's reference and the cache's. frees the fs. -EBUSY: in use, nothing is changed */
 int  ext4_write_super(struct ext4_sb *sb);     /* the super block as in memory, to the disk. meta_lock held */
 int  ext4_start_changes(struct ext4_sb *sb);   /* before a change: the first since a sync puts "not clean" on the disk. meta_lock held. -EROFS */
 
 /* inode.c */
-int ext4_map(struct inode *inode, uint64_t lblk, uint64_t *pblk); /* 0 and the block, 1 for a hole, or -errno */
 extern const struct inode_ops ext4_ops;
 
 static inline struct ext4_info *ext4_i(struct inode *inode) {
     return inode->priv;
 }
+
+void ext4_mark_dirty(struct inode *inode);  /* queue for the flusher; the inode lock is held */
+int  ext4_write_inode(struct inode *inode); /* inode->lock held; takes meta_lock */
 
 /* dir.c */
 int  ext4_lookup(struct inode *dir, const char *name, size_t len, struct inode **out);
@@ -312,3 +335,46 @@ void ext4_register(struct ext4_sb *sb);   /* a mounted fs is synced by the flush
 void ext4_unregister(struct ext4_sb *sb); /* waits for a sync in progress */
 int  ext4_sync_fs(struct ext4_sb *sb);    /* the dirty to the disk, then clean again if nothing is. 0 or -errno */
 int  ext4_sync_all(void);
+int  ext4_sync_inodes(struct ext4_sb *sb); /* the queue of dirty inodes: written, each with the inode lock */
+
+/* alloc.c: with meta_lock held; they call ext4_start_changes() */
+int      ext4_alloc_blocks(struct ext4_sb *sb, uint64_t goal, uint32_t want, uint64_t *start, uint32_t *got); /* up to want in a row, near goal. 0, -ENOSPC, -EIO */
+int      ext4_free_blocks(struct ext4_sb *sb, uint64_t start, uint32_t count);
+uint64_t ext4_free_blocks_count(struct ext4_sb *sb); /* the super block's counter */
+
+/* extent.c */
+struct ext4_ext_found { uint64_t lblk; uint32_t len; uint64_t pblk; bool unwritten; };
+
+int  ext4_ext_next(struct inode *inode, uint64_t lblk, struct ext4_ext_found *f); /* the extent with lblk, or the first after it. 0 (f), 1 none, -errno */
+int  ext4_map(struct inode *inode, uint64_t lblk, uint64_t *pblk);                 /* 0 and the block, 1 for a hole (or unwritten), or -errno */
+int  ext4_ext_insert(struct inode *inode, uint64_t lblk, uint64_t pblk, uint32_t len); /* meta_lock held. where there is none. adds len*8 to nblocks */
+int  ext4_ext_remove(struct inode *inode, uint64_t from, uint64_t to);             /* meta_lock held. the mappings in [from,to) and their blocks */
+
+/* pages.c: the pages of a file in the cache. the inode lock is held for all of these */
+uintptr_t ext4_page_get(struct inode *inode, uint64_t index);                  /* the frame; 0: not in the cache */
+int       ext4_page_read(struct inode *inode, uint64_t index, uintptr_t *out);  /* within the size: from the cache, or the disk */
+int       ext4_page_w(struct inode *inode, uint64_t index, uintptr_t *out);     /* to change: the same, and index may be past the size */
+int       ext4_page_zero(struct inode *inode, uint64_t index);                  /* a page of zeros, if there is none: for a block that was just allocated */
+void      ext4_page_dirty(struct inode *inode, uint64_t index);                 /* the page was changed; the inode is queued */
+void      ext4_pages_drop(struct inode *inode, uint64_t from, uint64_t to);     /* pages [from, to) leave the cache */
+int       ext4_flush_pages(struct inode *inode);                                /* the dirty pages to their blocks */
+void      ext4_pages_free(struct ext4_info *info);                              /* the last reference: all of them */
+int      ext4_alloc_inode(struct ext4_sb *sb, uint32_t parent, bool dir, uint32_t *ino); /* near the parent's group; a directory where most are free */
+int      ext4_free_inode(struct ext4_sb *sb, uint32_t ino, bool dir);
+
+/* dir.c: changing a directory. the dir's lock and meta_lock are held */
+int  ext4_dir_make_linear(struct inode *dir);  /* a dir with an index is made a plain one (before a name is added) */
+int  ext4_dir_add(struct inode *dir, const char *name, size_t len, uint32_t ino, uint8_t type);
+int  ext4_dir_remove(struct inode *dir, const char *name, size_t len, uint32_t ino); /* -ENOENT: not there, or another inode's */
+int  ext4_dir_empty(struct inode *dir, bool *empty);
+void ext4_dir_init_block(const struct ext4_sb *sb, uint8_t *block, uint32_t self, uint32_t parent); /* "." and ".." */
+int  ext4_dir_set_parent(struct inode *dir, uint32_t parent);
+
+/* namei.c: the ops that make and remove names, and the end of an inode that has none */
+int  ext4_create(struct inode *dir, const char *name, size_t len, uint32_t mode, struct inode **out);
+int  ext4_symlink(struct inode *dir, const char *name, size_t len, const char *target, struct inode **out);
+int  ext4_link(struct inode *dir, const char *name, size_t len, struct inode *inode);
+int  ext4_unlink(struct inode *dir, const char *name, size_t len, struct inode *inode);
+int  ext4_dir_retire(struct inode *dir);
+void ext4_inode_delete(struct inode *inode);
+long ext4_write(struct inode *inode, const void *buf, size_t n, uint64_t pos);

@@ -91,16 +91,18 @@ $(INITRD): $(EXEC)
 	@echo "CPIO  : $@"
 	@cd $(INITRD_DIR) && find . | LC_ALL=C sort | cpio -o -H newc --quiet > $@
 
-# no journal and no checksums: the kernel reads it without. room for what is in it and some for the tail of each block
+# no journal and no checksums: the kernel reads it without. room for what is in it and some for the tail of each block,
+# and 512 MiB to write into
 $(DISK): $(MESA) $(TOOLCHAIN) $(WAYLAND) $(GLMARK2) $(shell find $(DISK_DIR) -type f)
 	@echo "EXT4  : $@"
 	@mkdir -p $(DISK_ROOT)/usr
 	@cp -r $(DISK_DIR)/. $(DISK_ROOT)/usr/
 	@rm -f $@
 	@mke2fs -q -t ext4 -b 4096 -i 8192 -L serika -m 0 -O ^has_journal,^metadata_csum,^orphan_file,^resize_inode \
-		-E root_owner=0:0 -d $(DISK_ROOT)/usr $@ $$(( $$(du -sk $(DISK_ROOT)/usr | cut -f1) * 12 / 10 + 32768 ))K
+		-E root_owner=0:0 -d $(DISK_ROOT)/usr $@ $$(( $$(du -sk $(DISK_ROOT)/usr | cut -f1) * 12 / 10 + 32768 + 524288 ))K
 
-# metadata_csum on, no journal. a directory of 300 names with long names, so it has several blocks and an htree index
+# metadata_csum on, no journal. 400 MiB is four groups, and the three after the first start as BLOCK_UNINIT (the allocator
+# leaves those alone). a directory of 300 names with long names, so it has several blocks, and an htree index (e2fsck -D)
 $(TESTDISK): $(shell find $(TESTDISK_DIR) -type f)
 	@echo "EXT4  : $@"
 	@rm -rf $(TESTDISK_ROOT) $@
@@ -108,4 +110,6 @@ $(TESTDISK): $(shell find $(TESTDISK_DIR) -type f)
 	@cp -r $(TESTDISK_DIR)/. $(TESTDISK_ROOT)/
 	@for i in $$(seq 1 300); do echo "entry $$i" > $$(printf "$(TESTDISK_ROOT)/many/an-entry-with-a-long-name-%04d" $$i); done
 	@mke2fs -q -t ext4 -b 4096 -L serikatest -m 0 -O ^has_journal,metadata_csum,^orphan_file,^resize_inode \
-		-E root_owner=0:0 -d $(TESTDISK_ROOT) $@ 16M
+		-E root_owner=0:0 -d $(TESTDISK_ROOT) $@ 400M
+	@# mke2fs -d leaves a directory of many blocks without an index: -D makes it one (it exits 1 when it changed something)
+	@e2fsck -fyD $@ > /dev/null || true

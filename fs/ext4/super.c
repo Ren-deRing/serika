@@ -50,6 +50,21 @@ static uint32_t decode_dev(const uint32_t *block) {
     return major << 8 | (minor & 0xff);
 }
 
+/* the block of the inode table the inode is in, and where in it */
+int ext4_inode_loc(struct ext4_sb *sb, uint32_t ino, uint64_t *blk, uint32_t *off) {
+    uint32_t group = (ino - 1) / sb->inodes_per_group, index = (ino - 1) % sb->inodes_per_group;
+    uint64_t table;
+
+    int err = inode_table(sb, group, &table);
+    if (err) return err;
+
+    uint64_t at = (uint64_t)index * sb->inode_size;
+
+    *blk = table + at / EXT4_BLOCK_SIZE;
+    *off = at % EXT4_BLOCK_SIZE;
+    return 0;
+}
+
 /* ino is at most inodes_count, and ino 0 is none */
 static struct inode *ext4_read_inode(struct ext4_sb *sb, uint32_t ino) {
     uint32_t group = (ino - 1) / sb->inodes_per_group, index = (ino - 1) % sb->inodes_per_group;
@@ -86,6 +101,9 @@ static struct inode *ext4_read_inode(struct ext4_sb *sb, uint32_t ino) {
     info->seed  = seed;
     memcpy(info->block, di->block, sizeof(info->block));
     list_init(&info->hash);
+    list_init(&info->dirty);
+    info->nblocks = di->blocks_lo | (uint64_t)*(const uint16_t *)di->osd2 << 32;
+    if (info->flags & EXT4_INODE_HUGE_FILE_FL) info->nblocks *= EXT4_BLOCK_SIZE / SECTOR_SIZE; /* in blocks there */
 
     inode->priv  = info;
     inode->ino   = ino;
@@ -159,14 +177,42 @@ void ext4_evict(struct inode *inode) {
     struct ext4_info *info = ext4_i(inode);
     struct ext4_sb *sb = info->sb;
 
+    /* the flusher does not take it from here on (it is left alone once its references are gone) */
+    uint64_t dflags = spin_lock_irqsave(&sb->dirty_lock);
+    if (info->dirty.next != &info->dirty) {
+        list_del(&info->dirty);
+        list_init(&info->dirty);
+    }
+    spin_unlock_irqrestore(&sb->dirty_lock, dflags);
+
+    /* what the file system has of it is on the disk first; an inode with no names is deleted */
+    if (!sb->readonly) {
+        if (inode->nlink == 0) {
+            ext4_inode_delete(inode);
+        } else if (info->ndirty || info->inode_dirty) {
+            mutex_lock(&inode->lock);
+
+            ext4_flush_pages(inode);
+
+            if (info->inode_dirty) {
+                info->inode_dirty = false;
+                ext4_write_inode(inode);
+            }
+
+            mutex_unlock(&inode->lock);
+        }
+    }
+
     uint64_t flags = spin_lock_irqsave(&sb->icache_lock);
     if (info->hash.next != &info->hash) list_del(&info->hash); /* self linked: never put in */
     spin_unlock_irqrestore(&sb->icache_lock, flags);
 
-    for (size_t i = 0; i < info->npages; i++)
-        if (info->pages[i]) frame_put(info->pages[i]); /* a mapping of it keeps it until it goes */
+    flags = spin_lock_irqsave(&sb->dirty_lock);
+    if (info->dirty.next != &info->dirty) list_del(&info->dirty); /* a sync failed to write it: it is not coming */
+    spin_unlock_irqrestore(&sb->dirty_lock, flags);
 
-    if (info->pages) free_pages((void *)V2P((uintptr_t)info->pages), SIZE_TO_ORDER(info->npages * sizeof(uintptr_t)));
+    if (info->ndirty) __atomic_sub_fetch(&sb->ndirty_pages, info->ndirty, 0); /* __ATOMIC_RELAXED */
+    ext4_pages_free(info);
 
     kfree(info);
 }
@@ -223,7 +269,9 @@ struct inode *ext4_mount(struct blkdev *dev) {
     sb->csum             = es->feature_ro_compat & EXT4_RO_METADATA_CSUM;
     sb->csum_seed        = (es->feature_incompat & EXT4_INCOMPAT_CSUM_SEED) ? es->checksum_seed :
                            ext4_crc32c(~0U, es->uuid, sizeof(es->uuid));
-    sb->readonly         = (es->feature_ro_compat & ~EXT4_RO_WRITE_OK) || (es->state & 2); /* 2: errors were found */
+    /* 2: errors were found. gdt_csum alone is a crc16 of the descriptors, which is not written here */
+    sb->readonly         = (es->feature_ro_compat & ~EXT4_RO_WRITE_OK) || (es->state & 2) ||
+                           ((es->feature_ro_compat & EXT4_RO_GDT_CSUM) && !(es->feature_ro_compat & EXT4_RO_METADATA_CSUM));
     sb->clean_at_mount   = es->state & EXT4_STATE_VALID;
     sb->blocks_per_group = es->blocks_per_group;
     sb->groups_count     = (sb->blocks_count - sb->first_data_block + es->blocks_per_group - 1) / es->blocks_per_group;
@@ -243,6 +291,8 @@ struct inode *ext4_mount(struct blkdev *dev) {
     spin_lock_init(&sb->icache_lock);
 
     list_init(&sb->dirty_list);
+    spin_lock_init(&sb->dirty_lock);
+    list_init(&sb->dirty_inodes);
     for (int i = 0; i < EXT4_BCACHE_BUCKETS; i++) list_init(&sb->bcache[i]);
     for (int i = 0; i < EXT4_ICACHE_BUCKETS; i++) list_init(&sb->icache[i]);
 

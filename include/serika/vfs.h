@@ -31,6 +31,7 @@ struct inode_ops {
     int  (*punch_hole)(struct inode *inode, uint64_t off, uint64_t len); /* what is read there is zeros, the size stays. inside the size. lock held */
     long (*getdents)(struct inode *dir, void *buf, size_t n, uint64_t *pos); /* linux_dirent64s, pos is the entry */
     void (*evict)(struct inode *inode); /* last reference gone, no lock held */
+    void (*mark_dirty)(struct inode *inode); /* nlink, the mode, a time or the size changed: to be written. lock held, cheap */
 
     uint32_t (*poll)(struct inode *inode, uint32_t fflags, struct poll_table *pt); /* POLL* ready now. no lock held. none: always ready */
 
@@ -137,6 +138,7 @@ int  vfs_truncate(struct inode *inode, uint64_t size);
 int  vfs_punch_hole(struct inode *inode, uint64_t off, uint64_t len); /* fallocate(PUNCH_HOLE) */
 long vfs_readlink(struct inode *inode, char *buf, size_t n);
 void inode_touch(struct inode *inode); /* its data or entries changed: mtime and ctime, lock held */
+void inode_dirty(struct inode *inode); /* the fs is told that its inode changed, lock held */
 
 #define UTIME_NOW  ((1L << 30) - 1)
 #define UTIME_OMIT ((1L << 30) - 2)

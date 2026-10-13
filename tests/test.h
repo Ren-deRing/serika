@@ -100,6 +100,14 @@ bool test_ext4_mount_csum();
 bool test_ext4_read_csum();
 bool test_ext4_bflush();
 bool test_ext4_sync();
+bool test_ext4_inode();
+bool test_ext4_alloc();
+bool test_ext4_extent();
+bool test_ext4_write();
+bool test_ext4_persist();
+bool test_ext4_namei();
+bool test_ext4_namei_index();
+bool test_ext4_namei_persist();
 bool test_ext4_umount();
 bool ext4_test_mount(void); /* the test disk on /mnt, mounted once. false: no such disk */
 bool test_exec();
