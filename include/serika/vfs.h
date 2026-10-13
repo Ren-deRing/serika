@@ -152,7 +152,7 @@ long kernel_getdents(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
-/* source: a block device by name ("vda", or "/dev/vda"). only "ext4", read only */
+/* source: a block device by name ("sda", or "/dev/sda"). only "ext4", read only */
 int vfs_mount(const char *source, const char *target, const char *type);
 size_t vfs_mounts_text(char *buf, size_t cap, bool info); /* /proc/mounts, or mountinfo */
 struct inode *proc_root(void); /* the root of a procfs, referenced */

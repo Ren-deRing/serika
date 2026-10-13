@@ -103,6 +103,6 @@ bool test_ext4_read() {
     TEST_ASSERT(vfs_open("/usr/new", O_RDWR | O_CREAT, 0644, &f) == -EROFS);
     TEST_ASSERT(vfs_mkdir("/usr/dir", 0755) == -EROFS);
     TEST_ASSERT(vfs_unlink("/usr/hello.txt") == -EROFS);
-    TEST_ASSERT(vfs_mount("vda", "/usr", "ext4") == -EBUSY);
+    TEST_ASSERT(vfs_mount("sda", "/usr", "ext4") == -EBUSY);
     return true;
 }

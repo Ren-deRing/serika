@@ -46,6 +46,7 @@ static struct test tests[] = {
     { "vfs initrd",  test_vfs_initrd },
     { "vfs symlink", test_vfs_symlink },
     { "block read",  test_block_read },
+    { "block write", test_block_write },
     { "ext4 read",   test_ext4_read },
     { "vfs remove",  test_vfs_remove },
     { "exec",        test_exec },

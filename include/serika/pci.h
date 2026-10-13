@@ -31,6 +31,7 @@ struct pci_dev {
 void pci_init(void); /* after the page tables: finds every device behind bus 0 */
 
 struct pci_dev *pci_find(uint16_t vendor, uint16_t device, int nth); /* NULL: no such one */
+struct pci_dev *pci_find_class(uint8_t class, uint8_t subclass, uint8_t prog_if, int nth); /* the same, by what it is */
 
 uint8_t  pci_read8(const struct pci_dev *d, uint16_t off);
 uint16_t pci_read16(const struct pci_dev *d, uint16_t off);

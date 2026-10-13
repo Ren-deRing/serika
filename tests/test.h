@@ -86,6 +86,7 @@ bool test_wait_orphan();
 bool test_mutex();
 
 bool test_block_read();
+bool test_block_write();
 
 bool test_vfs_basic();
 bool test_vfs_initrd();

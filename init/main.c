@@ -1,4 +1,5 @@
 #include <serika/arch.h>
+#include <serika/block.h>
 #include <serika/boot.h>
 #include <serika/compiler.h>
 #include <serika/cpu.h>
@@ -82,14 +83,14 @@ notrace void start_init(void) {
     serial_tty_init();
 
     pci_init();
-    virtio_blk_init();
+    ahci_init();
 
     net_init();
     vfs_init();
     initramfs_unpack();
 
     /* what is big is on the disk */
-    if (vfs_mount("vda", "/usr", "ext4") != 0) printk("init: no disk to mount on /usr\n");
+    if (vfs_mount("sda", "/usr", "ext4") != 0) printk("init: no disk to mount on /usr\n");
 
     if (vfs_mount("proc", "/proc", "proc") != 0) printk("init: no /proc\n");
 

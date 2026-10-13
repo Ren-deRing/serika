@@ -65,5 +65,3 @@ int  virtio_queue_setup(struct virtio_dev *v, unsigned index, struct virtqueue *
 void virtio_driver_ok(struct virtio_dev *v);
 
 void virtqueue_kick(struct virtio_dev *v, struct virtqueue *vq, unsigned index); /* the head is in avail already */
-
-void virtio_blk_init(void); /* a block device for each virtio disk, after pci_init() */

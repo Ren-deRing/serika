@@ -1,6 +1,6 @@
 VIRTIO_DIR := drivers/builtin/virtio
 
-VIRTIO_SRCS_C := virtio.c virtio_blk.c virtio_input.c
+VIRTIO_SRCS_C := virtio.c virtio_input.c
 VIRTIO_SRCS_S :=
 
 VIRTIO_OBJS := $(patsubst %.c,$(OBJ_DIR)/$(VIRTIO_DIR)/%.c.o,$(VIRTIO_SRCS_C))

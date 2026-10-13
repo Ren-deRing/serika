@@ -181,7 +181,7 @@ run: build
 		-no-reboot \
 		-smp 4 \
 		-drive file=$(BUILD_DIR)/disk.img,if=none,id=disk0,format=raw \
-		-device virtio-blk-pci,drive=disk0,disable-legacy=on \
+		-device ide-hd,drive=disk0,bus=ide.0 \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-device virtio-tablet-pci,disable-legacy=on \
 		-audiodev pipewire,id=snd0 \

@@ -1,6 +1,6 @@
 BLOCK_DIR := drivers/builtin/block
 
-BLOCK_SRCS_C := block.c
+BLOCK_SRCS_C := block.c ahci.c
 BLOCK_SRCS_S :=
 
 BLOCK_OBJS := $(patsubst %.c,$(OBJ_DIR)/$(BLOCK_DIR)/%.c.o,$(BLOCK_SRCS_C))

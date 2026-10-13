@@ -120,6 +120,16 @@ struct pci_dev *pci_find(uint16_t vendor, uint16_t device, int nth) {
     return NULL;
 }
 
+struct pci_dev *pci_find_class(uint8_t class, uint8_t subclass, uint8_t prog_if, int nth) {
+    for (int i = 0; i < ndevs; i++) {
+        if (devs[i].class != class || devs[i].subclass != subclass || devs[i].prog_if != prog_if) continue;
+
+        if (nth-- == 0) return &devs[i];
+    }
+
+    return NULL;
+}
+
 uint8_t pci_find_cap(const struct pci_dev *d, uint8_t id, uint8_t prev) {
     if (!(pci_read16(d, 0x06) & 0x10)) return 0; /* status: has a capability list */
 
