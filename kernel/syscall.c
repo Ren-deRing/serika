@@ -289,7 +289,7 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_FCHOWN:          return sys_fchownat(args[0], 0, (int)args[1], (int)args[2], 0);
         case SYS_FSYNC:
         case SYS_FDATASYNC:       return sys_fsync(args[0]);
-        case SYS_SYNC:            return 0; /* memory only */
+        case SYS_SYNC:            return sys_sync();
         case SYS_MKNOD:           return sys_mknodat(AT_FDCWD, args[0], args[1], args[2]);
         case SYS_MKDIR:           return sys_mkdirat(AT_FDCWD, args[0], args[1]);
         case SYS_SYMLINK:         return sys_symlinkat(args[0], AT_FDCWD, args[1]);
@@ -370,6 +370,8 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_PSELECT6:        return sys_pselect6((int)args[0], args[1], args[2], args[3], args[4], args[5]);
         case SYS_PPOLL:           return sys_ppoll(args[0], args[1], args[2], args[3], args[4]);
         case SYS_MOUNT:           return sys_mount(args[0], args[1], args[2], args[3], args[4]);
+        case SYS_SYNCFS:          return sys_syncfs(args[0]);
+        case SYS_UMOUNT2:         return sys_umount2(args[0], args[1]);
         case SYS_FLOCK:           return sys_flock((int)args[0], (int)args[1]);
         case SYS_EVENTFD:         return sys_eventfd2((uint32_t)args[0], 0);
         case SYS_EVENTFD2:        return sys_eventfd2((uint32_t)args[0], (int)args[1]);

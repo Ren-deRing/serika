@@ -120,6 +120,7 @@
 #define SYS_ARCH_PRCTL      158
 #define SYS_SYNC            162
 #define SYS_MOUNT           165
+#define SYS_UMOUNT2         166
 #define SYS_GETTID          186
 #define SYS_TKILL           200
 #define SYS_TIME            201
@@ -168,6 +169,7 @@
 #define SYS_PIPE2           293
 #define SYS_RECVMMSG        299
 #define SYS_PRLIMIT64       302
+#define SYS_SYNCFS          306
 #define SYS_SENDMMSG        307
 #define SYS_GETCPU          309
 #define SYS_RENAMEAT2       316
@@ -255,6 +257,9 @@ long sys_utimensat(long dirfd, long upath, long utimes, long flags);
 
 /* fs/mount.c */
 long sys_mount(long usource, long utarget, long utype, long flags, long udata);
+long sys_umount2(long utarget, long flags);
+long sys_sync(void);
+long sys_syncfs(long fd);
 
 /* fs/flock.c */
 long sys_flock(long fd, long op);

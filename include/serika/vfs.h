@@ -111,6 +111,7 @@ extern struct inode *vfs_root;
 extern struct inode *console_inode; /* fd 0, 1 and 2. the only tty */
 
 void vfs_init(void);
+void ext4_init(void); /* after vfs_init() */
 
 struct inode *inode_alloc(const struct inode_ops *ops, uint32_t mode); /* one reference */
 void iget(struct inode *inode);
@@ -152,8 +153,9 @@ long kernel_getdents(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_read(struct file *f, void *buf, size_t n, uint64_t *pos);
 long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
-/* source: a block device by name ("sda", or "/dev/sda"). only "ext4", read only */
+/* source: a block device by name ("sda", or "/dev/sda"). only "ext4"; its changes are still refused */
 int vfs_mount(const char *source, const char *target, const char *type);
+int vfs_umount(const char *target); /* an ext4 that nothing has open. 0, -EINVAL (not the root of a mount), -EBUSY */
 size_t vfs_mounts_text(char *buf, size_t cap, bool info); /* /proc/mounts, or mountinfo */
 struct inode *proc_root(void); /* the root of a procfs, referenced */
 

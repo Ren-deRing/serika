@@ -22,6 +22,7 @@ static struct {
     char     target[48];
     char     type[16];
     uint32_t dev;
+    struct inode *dir, *up; /* the mount point and where its ".." goes: the references the mount holds */
 } mounts[MOUNTS_MAX];
 
 static int nmounts;
@@ -46,7 +47,7 @@ size_t vfs_mounts_text(char *buf, size_t cap, bool info) {
     return at;
 }
 
-/* target becomes the root of the file system on source: an ext4 on a disk, or the /proc. it stays mounted: no umount yet */
+/* target becomes the root of the file system on source: an ext4 on a disk, or the /proc. it stays mounted until vfs_umount() */
 int vfs_mount(const char *source, const char *target, const char *type) {
     bool proc = strcmp(type, "proc") == 0;
     struct blkdev *dev = NULL;
@@ -69,6 +70,7 @@ int vfs_mount(const char *source, const char *target, const char *type) {
 
     if (!S_ISDIR(dir->mode)) err = -ENOTDIR;
     else if (dir == vfs_root || dir->mounted || dir->mnt_parent) err = -EBUSY;
+    else if (nmounts >= MOUNTS_MAX) err = -ENOSPC; /* it could not be listed, and so not taken off */
 
     char *up_path = err ? NULL : kmalloc(PATH_MAX);
 
@@ -116,6 +118,8 @@ int vfs_mount(const char *source, const char *target, const char *type) {
         strncpy(mounts[nmounts].target, target, sizeof(mounts[0].target) - 1);
         strncpy(mounts[nmounts].type, type, sizeof(mounts[0].type) - 1);
         mounts[nmounts].dev = root->dev;
+        mounts[nmounts].dir = dir;
+        mounts[nmounts].up  = up->inode;
         nmounts++;
     }
 
@@ -146,6 +150,91 @@ long sys_mount(long usource, long utarget, long utype, long flags, long udata) {
     if (err) return err;
 
     err = vfs_mount(source, target, type);
+
+    kfree(target);
+    return err;
+}
+
+/* every ext4 to its disk. the ramfs and /proc are memory only */
+long sys_sync(void) {
+    ext4_sync_all();
+    return 0;
+}
+
+/* the file system fd is on */
+long sys_syncfs(long fd) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    long err = f->inode->ops == &ext4_ops ? ext4_sync_fs(ext4_i(f->inode)->sb) : 0;
+
+    vfs_close(f);
+    return err;
+}
+
+/* the file system whose root is at target, if it is an ext4: synced, the cache let go, and the mount point is the dir it was */
+int vfs_umount(const char *target) {
+    struct file *mp;
+
+    int err = vfs_open(target, O_PATH, 0, &mp);
+    if (err) return err;
+
+    struct inode *root = mp->inode;
+    int idx = -1;
+
+    if (root->ops != &ext4_ops || !root->mnt_parent) {
+        vfs_close(mp);
+        return -EINVAL;
+    }
+
+    uint64_t fl = spin_lock_irqsave(&mounts_lock);
+
+    for (int i = 0; i < nmounts; i++)
+        if (mounts[i].dir->mounted == root) idx = i;
+
+    spin_unlock_irqrestore(&mounts_lock, fl);
+
+    if (idx < 0) {
+        vfs_close(mp);
+        return -EINVAL;
+    }
+
+    struct inode *dir = mounts[idx].dir, *up = mounts[idx].up;
+
+    /* new lookups cannot get in once it is not mounted; if it turns out to be in use, it is put back */
+    __atomic_store_n(&dir->mounted, NULL, 3); /* __ATOMIC_RELEASE */
+
+    /* ours is the reference of the open above; ext4_umount() counts the rest */
+    vfs_close(mp);
+
+    err = ext4_umount(root);
+
+    if (err) {
+        __atomic_store_n(&dir->mounted, root, 3); /* __ATOMIC_RELEASE */
+        return err;
+    }
+
+    fl = spin_lock_irqsave(&mounts_lock);
+
+    for (int i = idx; i + 1 < nmounts; i++) mounts[i] = mounts[i + 1];
+    nmounts--;
+
+    spin_unlock_irqrestore(&mounts_lock, fl);
+
+    iput(dir);
+    iput(up);
+    return 0;
+}
+
+long sys_umount2(long utarget, long flags) {
+    char *target;
+
+    if (flags) return -EINVAL;
+
+    int err = path_from_user(AT_FDCWD, utarget, &target);
+    if (err) return err;
+
+    err = vfs_umount(target);
 
     kfree(target);
     return err;

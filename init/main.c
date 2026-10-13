@@ -87,6 +87,7 @@ notrace void start_init(void) {
 
     net_init();
     vfs_init();
+    ext4_init();
     initramfs_unpack();
 
     /* what is big is on the disk */

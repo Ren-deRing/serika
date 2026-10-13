@@ -93,6 +93,15 @@ bool test_vfs_initrd();
 bool test_vfs_symlink();
 bool test_vfs_remove();
 bool test_ext4_read();
+bool test_ext4_crc32c();
+bool test_ext4_csum_kinds();
+bool test_ext4_csum_dir();
+bool test_ext4_mount_csum();
+bool test_ext4_read_csum();
+bool test_ext4_bflush();
+bool test_ext4_sync();
+bool test_ext4_umount();
+bool ext4_test_mount(void); /* the test disk on /mnt, mounted once. false: no such disk */
 bool test_exec();
 bool test_exec_glibc();
 bool test_exec_files();

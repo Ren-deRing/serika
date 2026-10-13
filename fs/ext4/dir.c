@@ -31,7 +31,7 @@ static int dir_block(struct inode *dir, uint64_t b, const uint8_t **block) {
     int err = ext4_map(dir, b, &pblk);
     if (err) return err;
 
-    *block = ext4_bread(ext4_i(dir)->sb, pblk);
+    *block = ext4_bread_kind(ext4_i(dir)->sb, pblk, EXT4_B_DIR, ext4_i(dir)->seed);
     return *block ? 0 : -EIO;
 }
 

@@ -10,60 +10,6 @@
 
 #include "ext4.h"
 
-/* one block of the cache. the page stays: nobody frees a block, and what is given out is a plain pointer.
- * TODO: let go of blocks when memory is short */
-struct bcache_entry {
-    list_node  node;
-    uint64_t   blk;
-    void      *data;
-};
-
-static int disk_read(struct ext4_sb *sb, uint64_t blk, void *data) {
-    return blk_read(sb->dev, blk * (EXT4_BLOCK_SIZE / SECTOR_SIZE), data, EXT4_BLOCK_SIZE / SECTOR_SIZE);
-}
-
-const void *ext4_bread(struct ext4_sb *sb, uint64_t blk) {
-    if (blk >= sb->blocks_count) return NULL;
-
-    list_node *head = &sb->bcache[blk % EXT4_BCACHE_BUCKETS];
-    const void *data = NULL;
-
-    mutex_lock(&sb->bcache_lock);
-
-    for (list_node *n = head->next; n != head; n = n->next) {
-        struct bcache_entry *e = container_of(n, struct bcache_entry, node);
-
-        if (e->blk == blk) {
-            data = e->data;
-            break;
-        }
-    }
-
-    if (!data) {
-        struct bcache_entry *e = kmalloc(sizeof(*e));
-        void *page = alloc_pages(0);
-
-        if (e && page) {
-            e->blk  = blk;
-            e->data = (void *)P2V((uintptr_t)page);
-
-            if (disk_read(sb, blk, e->data) == 0) {
-                list_add_tail(&e->node, head);
-                data = e->data;
-            } else {
-                free_pages(page, 0);
-                kfree(e);
-            }
-        } else {
-            kfree(e);
-            if (page) free_pages(page, 0);
-        }
-    }
-
-    mutex_unlock(&sb->bcache_lock);
-    return data;
-}
-
 /* the inode table of a group, as a block number */
 static int inode_table(struct ext4_sb *sb, uint32_t group, uint64_t *blk) {
     uint64_t desc = (uint64_t)group * sb->desc_size;
@@ -71,6 +17,11 @@ static int inode_table(struct ext4_sb *sb, uint32_t group, uint64_t *blk) {
     if (!table) return -EIO;
 
     const struct ext4_group_desc *gd = (const void *)(table + desc % EXT4_BLOCK_SIZE);
+
+    if (sb->csum && ext4_gd_csum(sb->csum_seed, sb->desc_size, group, gd) != gd->checksum) {
+        printk("ext4: %s: group %u descriptor checksum\n", sb->dev->name, group);
+        return -EIO;
+    }
 
     *blk = gd->inode_table_lo;
     if (sb->wide && sb->desc_size >= 64) *blk |= (uint64_t)gd->inode_table_hi << 32;
@@ -112,6 +63,13 @@ static struct inode *ext4_read_inode(struct ext4_sb *sb, uint32_t ino) {
 
     const struct ext4_inode *di = (const void *)(block + off % EXT4_BLOCK_SIZE);
 
+    uint32_t seed = sb->csum ? ext4_inode_seed(sb->csum_seed, ino, di->generation) : 0;
+
+    if (sb->csum && !ext4_inode_csum_ok(seed, sb->inode_size, di)) {
+        printk("ext4: %s: inode %u checksum\n", sb->dev->name, ino);
+        return NULL;
+    }
+
     struct ext4_info *info = kmalloc(sizeof(*info));
     struct inode *inode = info ? inode_alloc(&ext4_ops, di->mode) : NULL;
 
@@ -124,6 +82,8 @@ static struct inode *ext4_read_inode(struct ext4_sb *sb, uint32_t ino) {
     info->sb    = sb;
     info->inode = inode;
     info->flags = di->flags;
+    info->generation = di->generation;
+    info->seed  = seed;
     memcpy(info->block, di->block, sizeof(info->block));
     list_init(&info->hash);
 
@@ -232,6 +192,8 @@ struct inode *ext4_mount(struct blkdev *dev) {
         goto fail;
     }
 
+    sb->es = NULL; /* the failures that come before it is set free what there is */
+
     if (blk_read(dev, 0, (void *)P2V((uintptr_t)page), EXT4_BLOCK_SIZE / SECTOR_SIZE) != 0) {
         why = "unable to read";
         goto fail;
@@ -241,8 +203,10 @@ struct inode *ext4_mount(struct blkdev *dev) {
     else if (es->feature_incompat & 0x4)                   why = "needs journal recovery";
     else if (es->feature_incompat & ~EXT4_INCOMPAT_SUPPORTED) why = "unsupported features";
     else if (es->log_block_size != 2)                      why = "block size is not 4096";
-    else if (es->rev_level < 1 || es->inode_size < 128)    why = "old format";
+    else if (es->rev_level < 1 || es->inode_size < 128 || es->inode_size > 1024) why = "old format";
     else if (!es->inodes_per_group || !es->blocks_per_group) why = "damaged";
+    else if ((es->feature_ro_compat & EXT4_RO_METADATA_CSUM) && es->checksum_type != EXT4_CSUM_CRC32C) why = "unknown checksum";
+    else if ((es->feature_ro_compat & EXT4_RO_METADATA_CSUM) && !ext4_super_csum_ok(es)) why = "super block checksum";
 
     if (why) goto fail;
 
@@ -256,10 +220,29 @@ struct inode *ext4_mount(struct blkdev *dev) {
     sb->desc_size        = sb->wide && es->desc_size ? es->desc_size : 32;
     sb->blocks_count     = es->blocks_count_lo | (sb->wide ? (uint64_t)es->blocks_count_hi << 32 : 0);
     sb->id               = __atomic_fetch_add(&next_id, 1, 0); /* __ATOMIC_RELAXED */
+    sb->csum             = es->feature_ro_compat & EXT4_RO_METADATA_CSUM;
+    sb->csum_seed        = (es->feature_incompat & EXT4_INCOMPAT_CSUM_SEED) ? es->checksum_seed :
+                           ext4_crc32c(~0U, es->uuid, sizeof(es->uuid));
+    sb->readonly         = (es->feature_ro_compat & ~EXT4_RO_WRITE_OK) || (es->state & 2); /* 2: errors were found */
+    sb->clean_at_mount   = es->state & EXT4_STATE_VALID;
+    sb->blocks_per_group = es->blocks_per_group;
+    sb->groups_count     = (sb->blocks_count - sb->first_data_block + es->blocks_per_group - 1) / es->blocks_per_group;
+    memcpy(sb->hash_seed, es->hash_seed, sizeof(sb->hash_seed));
+    sb->hash_version     = es->def_hash_version;
+
+    sb->es = kmalloc(sizeof(*sb->es));
+    if (!sb->es) {
+        why = "out of memory";
+        goto fail;
+    }
+
+    memcpy(sb->es, es, sizeof(*es));
+    mutex_init(&sb->meta_lock);
 
     mutex_init(&sb->bcache_lock);
     spin_lock_init(&sb->icache_lock);
 
+    list_init(&sb->dirty_list);
     for (int i = 0; i < EXT4_BCACHE_BUCKETS; i++) list_init(&sb->bcache[i]);
     for (int i = 0; i < EXT4_ICACHE_BUCKETS; i++) list_init(&sb->icache[i]);
 
@@ -271,13 +254,106 @@ struct inode *ext4_mount(struct blkdev *dev) {
         goto fail;
     }
 
-    printk("ext4: %s \"%.16s\" %lu blocks\n", dev->name, es->volume_name, sb->blocks_count);
+    ext4_register(sb);
+    printk("ext4: %s \"%.16s\" %lu blocks%s%s\n", dev->name, es->volume_name, sb->blocks_count,
+           sb->csum ? ", checksums" : "", sb->readonly ? ", read only" : "");
     goto out;
 
 fail:
     printk("ext4: %s: %s\n", dev->name, why ? why : "out of memory");
-    if (sb_page) free_pages(sb_page, sb_order);
+    if (sb_page) {
+        kfree(sb->es);
+        free_pages(sb_page, sb_order);
+    }
 out:
     free_pages(page, 0);
     return root;
+}
+
+/* the super block as it is in memory, to the disk. meta_lock held */
+int ext4_write_super(struct ext4_sb *sb) {
+    if (sb->csum) ext4_super_csum_set(sb->es);
+
+    return blk_write(sb->dev, 1024 / SECTOR_SIZE, sb->es, sizeof(*sb->es) / SECTOR_SIZE);
+}
+
+/* the first change since the file system was clean: the disk says it is not before the change is made, so a crash
+ * leaves a file system that fsck knows was in use. meta_lock held */
+int ext4_start_changes(struct ext4_sb *sb) {
+    if (sb->readonly) return -EROFS;
+    if (!(sb->es->state & EXT4_STATE_VALID)) return 0;
+
+    sb->es->state &= ~EXT4_STATE_VALID;
+
+    int err = ext4_write_super(sb);
+
+    if (!err) err = blk_flush(sb->dev);
+
+    if (err) sb->es->state |= EXT4_STATE_VALID;
+
+    return err;
+}
+
+/* the number of references an idle inode in the cache has: the cache's own. the root has the mount's too */
+#define CACHE_REFS 1
+
+int ext4_umount(struct inode *root) {
+    struct ext4_sb *sb = ext4_i(root)->sb;
+
+    /* in use: an inode that something has open, is the cwd of, or maps */
+    uint64_t flags = spin_lock_irqsave(&sb->icache_lock);
+    bool busy = false;
+
+    for (int b = 0; b < EXT4_ICACHE_BUCKETS && !busy; b++) {
+        list_node *head = &sb->icache[b];
+
+        for (list_node *n = head->next; n != head; n = n->next) {
+            struct inode *inode = container_of(n, struct ext4_info, hash)->inode;
+            uint32_t refs = __atomic_load_n(&inode->refs, 0); /* __ATOMIC_RELAXED */
+
+            if (refs > CACHE_REFS + (inode == root ? 1 : 0)) {
+                busy = true;
+                break;
+            }
+        }
+    }
+
+    spin_unlock_irqrestore(&sb->icache_lock, flags);
+
+    if (busy) return -EBUSY;
+
+    int err = ext4_sync_fs(sb);
+    if (err) return err;
+
+    ext4_unregister(sb); /* waits for a sync that is going on */
+
+    /* the mount's reference on the root, then the cache's on every inode: each goes through ext4_evict() */
+    iput(root);
+
+    for (int b = 0; b < EXT4_ICACHE_BUCKETS; b++) {
+        for (;;) {
+            flags = spin_lock_irqsave(&sb->icache_lock);
+
+            list_node *head = &sb->icache[b];
+            list_node *n = head->next;
+            struct inode *inode = NULL;
+
+            if (n != head) {
+                inode = container_of(n, struct ext4_info, hash)->inode;
+                list_del(n);
+                list_init(n); /* self linked: ext4_evict() does not take it off again */
+            }
+
+            spin_unlock_irqrestore(&sb->icache_lock, flags);
+
+            if (!inode) break;
+
+            iput(inode); /* the cache's reference */
+        }
+    }
+
+    ext4_bfree(sb);
+    kfree(sb->es);
+    free_pages((void *)V2P((uintptr_t)sb), SIZE_TO_ORDER(sizeof(*sb)));
+    return 0;
 }

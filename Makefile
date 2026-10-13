@@ -56,7 +56,7 @@ export CPPFLAGS := -I$(BASE_DIR) \
 export LDFLAGS  := $(ARCH_LDFLAGS) -nostdlib -static --gc-sections \
 				   -no-pie -z max-page-size=0x1000 -T $(BASE_DIR)/arch/$(ARCH)/kernel/linker.ld
 
-.PHONY: all clean $(SUBDIRS) run build setup initrd
+.PHONY: all clean $(SUBDIRS) run build setup initrd fsck
 
 all: setup_check $(BIN_DIR)/$(OUTPUT)
 
@@ -182,6 +182,8 @@ run: build
 		-smp 4 \
 		-drive file=$(BUILD_DIR)/disk.img,if=none,id=disk0,format=raw \
 		-device ide-hd,drive=disk0,bus=ide.0 \
+		-drive file=$(BUILD_DIR)/test.img,if=none,id=disk1,format=raw \
+		-device ide-hd,drive=disk1,bus=ide.1 \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-device virtio-tablet-pci,disable-legacy=on \
 		-audiodev pipewire,id=snd0 \
@@ -192,6 +194,11 @@ run: build
 
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
+
+# the images, as the host sees them: clean after a run that was shut down, or at least a file system that fsck can mend
+fsck:
+	-e2fsck -fn $(BUILD_DIR)/test.img
+	-e2fsck -fn $(BUILD_DIR)/disk.img
 
 distclean: clean
 	rm -rf $(DEPS_DIR) $(SETUP_FLAG)

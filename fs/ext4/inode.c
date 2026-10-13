@@ -56,7 +56,7 @@ int ext4_map(struct inode *inode, uint64_t lblk, uint64_t *pblk) {
 
         if (!hit) return 1;
 
-        node = ext4_bread(info->sb, (uint64_t)hit->leaf_hi << 32 | hit->leaf_lo);
+        node = ext4_bread_kind(info->sb, (uint64_t)hit->leaf_hi << 32 | hit->leaf_lo, EXT4_B_EXTENT, info->seed);
         if (!node) return -EIO;
 
         size = EXT4_BLOCK_SIZE;

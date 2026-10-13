@@ -23,6 +23,12 @@ DISK_ROOT := $(BUILD_DIR)/diskroot
 DISK_DIR  := disk
 DISK      := $(BUILD_DIR)/disk.img
 
+# a small disk with checksums on, for the tests of the write path: attached as a second disk. the tests change it,
+# so it is made again each time
+TESTDISK_ROOT := $(BUILD_DIR)/testroot
+TESTDISK_DIR  := testdisk
+TESTDISK      := $(BUILD_DIR)/test.img
+
 # the host's mesa with llvmpipe, and what it loads: llvm is most of it
 MESA := $(BUILD_DIR)/mesa.stamp
 
@@ -35,9 +41,9 @@ WAYLAND := $(BUILD_DIR)/wayland.stamp
 # the opengl es benchmark
 GLMARK2 := $(BUILD_DIR)/glmark2.stamp
 
-.PHONY: all $(INITRD) $(DISK)
+.PHONY: all $(INITRD) $(DISK) $(TESTDISK)
 
-all: $(INITRD) $(DISK)
+all: $(INITRD) $(DISK) $(TESTDISK)
 
 $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
@@ -93,3 +99,13 @@ $(DISK): $(MESA) $(TOOLCHAIN) $(WAYLAND) $(GLMARK2) $(shell find $(DISK_DIR) -ty
 	@rm -f $@
 	@mke2fs -q -t ext4 -b 4096 -i 8192 -L serika -m 0 -O ^has_journal,^metadata_csum,^orphan_file,^resize_inode \
 		-E root_owner=0:0 -d $(DISK_ROOT)/usr $@ $$(( $$(du -sk $(DISK_ROOT)/usr | cut -f1) * 12 / 10 + 32768 ))K
+
+# metadata_csum on, no journal. a directory of 300 names with long names, so it has several blocks and an htree index
+$(TESTDISK): $(shell find $(TESTDISK_DIR) -type f)
+	@echo "EXT4  : $@"
+	@rm -rf $(TESTDISK_ROOT) $@
+	@mkdir -p $(TESTDISK_ROOT)/many
+	@cp -r $(TESTDISK_DIR)/. $(TESTDISK_ROOT)/
+	@for i in $$(seq 1 300); do echo "entry $$i" > $$(printf "$(TESTDISK_ROOT)/many/an-entry-with-a-long-name-%04d" $$i); done
+	@mke2fs -q -t ext4 -b 4096 -L serikatest -m 0 -O ^has_journal,metadata_csum,^orphan_file,^resize_inode \
+		-E root_owner=0:0 -d $(TESTDISK_ROOT) $@ 16M

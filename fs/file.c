@@ -13,6 +13,8 @@
 #include <serika/uio.h>
 #include <serika/vfs.h>
 
+#include "ext4/ext4.h"
+
 /* never changed once made: chdir swaps the pointer */
 struct cwd {
     uint32_t refs; /* atomic */
@@ -1341,8 +1343,11 @@ long sys_fsync(long fd) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
+    /* the whole fs, with its pages and inode first when there are some (stage 2) */
+    long err = f->inode->ops == &ext4_ops ? ext4_sync_fs(ext4_i(f->inode)->sb) : 0;
+
     vfs_close(f);
-    return 0;
+    return err;
 }
 
 struct utimespec {

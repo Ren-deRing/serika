@@ -27,6 +27,8 @@ behind a port is `sda`, `sdb`, ... in the order the ports are found.
 
 `virtio_blk` is in `drivers/modules/virtio_blk/`: not built, kept for when modules can be loaded.
 
+`sdb` is `build/test.img` (16 MiB, checksums on), the disk the tests of the file system write to.
+
 ## Tests
 
 `block read`: the whole is the same as sector by sector, the ext4 magic, the end of the disk. `block write`: the last
