@@ -157,6 +157,9 @@ long kernel_write(struct file *f, const void *buf, size_t n, uint64_t *pos);
 
 /* source: a block device by name ("sda", or "/dev/sda"). only "ext4"; its changes are still refused */
 int vfs_mount(const char *source, const char *target, const char *type);
+bool vfs_inside(struct inode *ancestor, struct inode *dir); /* dir is ancestor, or below it */
+int  vfs_dotdot(struct inode *dir, struct inode **up);       /* the dir above, referenced */
+int  vfs_pivot_root(const char *new_root, const char *put_old); /* new_root (the root of a mount) becomes "/", the old root is put_old's */
 int vfs_umount(const char *target); /* an ext4 that nothing has open. 0, -EINVAL (not the root of a mount), -EBUSY */
 size_t vfs_mounts_text(char *buf, size_t cap, bool info); /* /proc/mounts, or mountinfo */
 struct inode *proc_root(void); /* the root of a procfs, referenced */

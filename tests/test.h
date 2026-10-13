@@ -108,6 +108,7 @@ bool test_ext4_persist();
 bool test_ext4_namei();
 bool test_ext4_namei_index();
 bool test_ext4_namei_persist();
+bool test_vfs_pivot();
 bool test_ext4_umount();
 bool ext4_test_mount(void); /* the test disk on /mnt, mounted once. false: no such disk */
 bool test_exec();

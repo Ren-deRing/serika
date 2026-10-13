@@ -74,6 +74,24 @@ inode under it, takes out the old name. A dir moving into itself or below is `EI
 up from the target. A dir's `..` is a counted reference to its parent, changed by `link` when it moves.
 `link` of a dir is `EPERM`.
 
+## Mounts and the root
+
+A dir with a file system on it has the root of that file system in `mounted` (a lookup of the dir gives that), and the root
+has `mnt_parent`, the dir its ".." goes to. `mount()` and `umount2()` (ext4 only) keep a table of them (`/proc/mounts`).
+
+`pivot_root(new_root, put_old)` makes `new_root`, the root of a mounted file system, the root (`vfs_root`), and the old
+root is mounted on `put_old`, a dir of the new one (not a mount, below `new_root`; `EINVAL` for the others, `EBUSY` for
+`put_old` being `new_root`). What was mounted in the old root stays there, so it is under `put_old` now. The references
+change hands (the new root's, which its mount point had, is `vfs_root`'s; the old root's is `put_old`'s), the mount table is
+edited (the first line of `/proc/mounts` is the new root, the old one is listed under `put_old`, the other targets get the
+new names), and the new root's ".." is itself. Paths are strings here (a cwd is one, so is the path a file keeps for
+`openat`), so every task sees the new root from then on, as if all had done `pivot_root` and `chroot(".")`. Not carried over
+(there is no `MS_MOVE` or bind mount yet): `/dev` and `/proc` stay in the old root.
+
+TODO: linux keeps a `struct path` (mount and dentry) for a task's root and cwd and for each open file, and `pivot_root` only moves the
+tasks whose root or cwd was the old root; the strings here make it global, and an `openat` on a dir that was opened before the pivot
+looks its path up again in the new root. Keeping (mount, inode) in the cwd and the file, and a root for each task, is the fix.
+
 ## Times
 
 An inode has `atime`, `mtime` and `ctime` in nanoseconds since 1970, under its lock. Writes, truncates and

@@ -622,6 +622,18 @@ static bool is_inside(struct inode *ancestor, struct inode *dir) {
     }
 }
 
+bool vfs_inside(struct inode *ancestor, struct inode *dir) {
+    return is_inside(ancestor, dir);
+}
+
+int vfs_dotdot(struct inode *dir, struct inode **up) {
+    mutex_lock(&dir->lock);
+    int err = lookup_locked(dir, "..", 2, up);
+    mutex_unlock(&dir->lock);
+
+    return err;
+}
+
 static int do_rename(struct entry *o, struct entry *n) {
     struct inode *src = o->inode, *dst = n->inode;
     int err;

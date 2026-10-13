@@ -63,6 +63,7 @@ static struct test tests[] = {
     { "ext4 namei",  test_ext4_namei },
     { "ext4 namei index", test_ext4_namei_index },
     { "ext4 namei persist", test_ext4_namei_persist },
+    { "vfs pivot",   test_vfs_pivot },
     { "ext4 umount", test_ext4_umount },
     { "vfs remove",  test_vfs_remove },
     { "exec",        test_exec },

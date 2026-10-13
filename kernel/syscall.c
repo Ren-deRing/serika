@@ -372,6 +372,7 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_MOUNT:           return sys_mount(args[0], args[1], args[2], args[3], args[4]);
         case SYS_SYNCFS:          return sys_syncfs(args[0]);
         case SYS_UMOUNT2:         return sys_umount2(args[0], args[1]);
+        case SYS_PIVOT_ROOT:      return sys_pivot_root(args[0], args[1]);
         case SYS_FLOCK:           return sys_flock((int)args[0], (int)args[1]);
         case SYS_EVENTFD:         return sys_eventfd2((uint32_t)args[0], 0);
         case SYS_EVENTFD2:        return sys_eventfd2((uint32_t)args[0], (int)args[1]);

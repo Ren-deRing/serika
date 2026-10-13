@@ -116,6 +116,7 @@
 #define SYS_SCHED_GETSCHEDULER 145
 #define SYS_SCHED_GET_PRIORITY_MAX 146
 #define SYS_SCHED_GET_PRIORITY_MIN 147
+#define SYS_PIVOT_ROOT      155
 #define SYS_PRCTL           157
 #define SYS_ARCH_PRCTL      158
 #define SYS_SYNC            162
@@ -258,6 +259,7 @@ long sys_utimensat(long dirfd, long upath, long utimes, long flags);
 /* fs/mount.c */
 long sys_mount(long usource, long utarget, long utype, long flags, long udata);
 long sys_umount2(long utarget, long flags);
+long sys_pivot_root(long unew, long uold);
 long sys_sync(void);
 long sys_syncfs(long fd);
 

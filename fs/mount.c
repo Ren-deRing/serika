@@ -28,19 +28,22 @@ static struct {
 static int nmounts;
 static spinlock_t mounts_lock = SPINLOCK_INITIALIZER;
 
+/* what the root is, for the first line: the initramfs until a pivot_root */
+static char root_source[32] = "rootfs", root_type[16] = "rootfs";
+
 /* "rootfs / rootfs rw 0 0" and a line for each mount; or mountinfo's: id, parent, device, root, mount point, options, type, source */
 size_t vfs_mounts_text(char *buf, size_t cap, bool info) {
     size_t at = 0;
 
-    at += info ? ksnprintf(buf + at, cap - at, "1 0 0:0 / / rw - rootfs rootfs rw\n") :
-                 ksnprintf(buf + at, cap - at, "rootfs / rootfs rw 0 0\n");
-
     uint64_t flags = spin_lock_irqsave(&mounts_lock);
 
+    at += info ? ksnprintf(buf + at, cap - at, "1 0 0:0 / / rw - %s %s rw\n", root_type, root_source) :
+                 ksnprintf(buf + at, cap - at, "%s / %s rw 0 0\n", root_source, root_type);
+
     for (int i = 0; i < nmounts && at < cap; i++) {
-        at += info ? ksnprintf(buf + at, cap - at, "%d 1 0:%u / %s ro - %s %s ro\n", 2 + i, 1 + mounts[i].dev, mounts[i].target,
+        at += info ? ksnprintf(buf + at, cap - at, "%d 1 0:%u / %s rw - %s %s rw\n", 2 + i, 1 + mounts[i].dev, mounts[i].target,
                                mounts[i].type, mounts[i].source) :
-                     ksnprintf(buf + at, cap - at, "%s %s %s ro 0 0\n", mounts[i].source, mounts[i].target, mounts[i].type);
+                     ksnprintf(buf + at, cap - at, "%s %s %s rw 0 0\n", mounts[i].source, mounts[i].target, mounts[i].type);
     }
 
     spin_unlock_irqrestore(&mounts_lock, flags);
@@ -237,5 +240,128 @@ long sys_umount2(long utarget, long flags) {
     err = vfs_umount(target);
 
     kfree(target);
+    return err;
+}
+
+/* the root becomes new_root, the root of a mounted file system, and the old root is mounted on put_old, a dir of the new
+ * one. paths are strings in this VFS (a cwd is one, and a file's own path), so every task sees the new root from now on.
+ * what was mounted in the old root stays there, under put_old.
+ * TODO: a root and a cwd for each task as (mount, inode), see docs/fs/vfs.md */
+int vfs_pivot_root(const char *new_path, const char *old_path) {
+    struct file *nf, *of;
+
+    int err = vfs_open(new_path, O_PATH, 0, &nf);
+    if (err) return err;
+
+    err = vfs_open(old_path, O_PATH, 0, &of);
+
+    if (err) {
+        vfs_close(nf);
+        return err;
+    }
+
+    struct inode *new = nf->inode, *old = of->inode, *up = NULL;
+    int idx = -1;
+
+    if (!S_ISDIR(new->mode) || !S_ISDIR(old->mode)) err = -ENOTDIR;
+    else if (new == vfs_root || !new->mnt_parent)    err = -EINVAL;   /* not the root of a mounted file system */
+    else if (old == new || old->mounted || old->mnt_parent) err = -EBUSY;
+    else if (!vfs_inside(new, old))                  err = -EINVAL;   /* put_old is under new_root */
+
+    uint64_t fl = spin_lock_irqsave(&mounts_lock);
+
+    for (int i = 0; i < nmounts && !err; i++)
+        if (mounts[i].dir->mounted == new) idx = i;
+
+    spin_unlock_irqrestore(&mounts_lock, fl);
+
+    if (!err && idx < 0) err = -EINVAL;
+    if (!err) err = vfs_dotdot(old, &up);                             /* where ".." of the old root will go */
+
+    if (err) {
+        vfs_close(of);
+        vfs_close(nf);
+        return err;
+    }
+
+    /* put_old as the new root names it, and what other mounts are called from there */
+    size_t nl = strlen(new_path);
+    const char *rel = (strncmp(old_path, new_path, nl) == 0 && old_path[nl] == '/') ? old_path + nl : old_path;
+    size_t rl = strlen(rel);
+
+    struct inode *oldroot = vfs_root, *point = mounts[idx].dir, *point_up = mounts[idx].up;
+
+    fl = spin_lock_irqsave(&mounts_lock);
+
+    char source[sizeof(root_source)], type[sizeof(root_type)];
+
+    strcpy(source, mounts[idx].source);
+    strcpy(type, mounts[idx].type);
+
+    for (int i = idx; i + 1 < nmounts; i++) mounts[i] = mounts[i + 1];
+    nmounts--;
+
+    for (int i = 0; i < nmounts; i++) {
+        char *t = mounts[i].target;
+        size_t tl = strlen(t);
+
+        if (strncmp(t, new_path, nl) == 0 && t[nl] == '/') {         /* in the new root: from its top now */
+            memmove(t, t + nl, tl - nl + 1);
+        } else if (rl + tl < sizeof(mounts[0].target)) {              /* in the old one: under put_old */
+            memmove(t + rl, t, tl + 1);
+            memcpy(t, rel, rl);
+        }
+    }
+
+    if (nmounts < MOUNTS_MAX) {                                       /* the old root, where it is now */
+        strcpy(mounts[nmounts].source, root_source);
+        strncpy(mounts[nmounts].target, rel, sizeof(mounts[0].target) - 1);
+        mounts[nmounts].target[sizeof(mounts[0].target) - 1] = 0;
+        strcpy(mounts[nmounts].type, root_type);
+        mounts[nmounts].dev = oldroot->dev;
+        mounts[nmounts].dir = old;
+        mounts[nmounts].up  = up;
+        nmounts++;
+        iget(old);                                                    /* the mount's */
+    }
+
+    strcpy(root_source, source);
+    strcpy(root_type, type);
+
+    spin_unlock_irqrestore(&mounts_lock, fl);
+
+    /* the references change hands: the new root's, which its mount point had, is vfs_root's; the old root's, which vfs_root had,
+     * is put_old's. what the old mount held on its point and on where ".." went is let go */
+    oldroot->mnt_parent = up;
+    __atomic_store_n(&old->mounted, oldroot, 3);                      /* __ATOMIC_RELEASE */
+    __atomic_store_n(&point->mounted, NULL, 3);
+    new->mnt_parent = NULL;
+    __atomic_store_n(&vfs_root, new, 3);
+
+    iput(point);
+    iput(point_up);
+
+    vfs_close(of);
+    vfs_close(nf);
+    return 0;
+}
+
+long sys_pivot_root(long unew, long uold) {
+    char *new_path, *old_path;
+
+    int err = path_from_user(AT_FDCWD, unew, &new_path);
+    if (err) return err;
+
+    err = path_from_user(AT_FDCWD, uold, &old_path);
+
+    if (err) {
+        kfree(new_path);
+        return err;
+    }
+
+    err = vfs_pivot_root(new_path, old_path);
+
+    kfree(new_path);
+    kfree(old_path);
     return err;
 }
