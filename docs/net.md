@@ -125,3 +125,24 @@ The kernel uses UDP too (DHCP): `udp_open()`, `udp_bind_k()`, `udp_send_k()`, `u
 `SIOCGIFCONF`, `SIOCGIFNAME`, `SIOCGIFFLAGS`, `SIOCSIFFLAGS` (up and down), `SIOCGIFADDR`, `SIOCSIFADDR`,
 `SIOCGIFNETMASK`, `SIOCSIFNETMASK`, `SIOCGIFBRDADDR`, `SIOCGIFMTU`, `SIOCGIFHWADDR` and `SIOCGIFINDEX` on any socket.
 The list of interfaces for `getifaddrs()` and `ip` is netlink, later.
+
+# DHCP
+
+`net/dhcp.c` is a client for the first interface that is not `lo`, a kernel thread (`dhcpd`) started by `dhcp_init()` after
+the file system is up. It uses the kernel's UDP socket on port 68 (`udp_send_k()`). The interface starts with the static
+10.0.2.15/24 that it is registered with, and that stays until there is a lease (and for good if there is no server: the
+client tries again each 30 s).
+
+DISCOVER (broadcast flag set, so an offer can come to an interface that has no address), OFFER, REQUEST, ACK, up to four
+tries with the wait doubled (2, 4, 8, 16 s). The ACK gives the address, mask, router (`gw`), the first DNS server (`dns`)
+and the lease; `/etc/resolv.conf` is written with the DNS server. Then the lease is kept:
+
+- at T1 (the server's option 58, or half of the lease) a REQUEST with `ciaddr` goes to the server that gave it (renewing),
+  again at half of what is left to T2 (not sooner than 60 s);
+- at T2 (option 59, or 7/8) it goes to anyone (rebinding), until the lease is over;
+- an ACK gives a new lease (`dhcp_renewals()` counts them); a NAK or the end of the lease drops the address (the interface
+  has none) and it begins again with DISCOVER.
+
+T1 and T2 that cannot be (not T1 < T2 < lease) are replaced by the defaults, a lease of `0xffffffff` is never renewed.
+`dhcp_renew_now()` makes the wait for T1 end at once; the test uses it to see a renewal go through QEMU's server. Not here:
+the options for a host name, NTP, domain search; `INFORM`, `RELEASE` when the interface goes down; more than one interface.

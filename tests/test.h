@@ -126,6 +126,8 @@ bool test_net_ping_lo();
 bool test_net_arp();
 bool test_net_ping_gw();
 bool test_net_udp();
+bool test_net_dhcp_parse();
+bool test_net_dhcp();
 bool test_exec_udp();
 bool test_exec_events();
 bool test_exec_drm();

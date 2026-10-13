@@ -109,8 +109,9 @@ int udp_send(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, s
 
     if (!sk->bound && (err = udp_bind(sk, 0, 0))) return err;
 
+    /* the broadcast of DHCP goes from no address at all */
     uint32_t from = ip_src_for(dst);
-    if (!from) return -ENETUNREACH;
+    if (!from && dst != 0xffffffffU) return -ENETUNREACH;
 
     uint32_t src = sk->laddr ? sk->laddr : from;
 

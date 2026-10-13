@@ -70,6 +70,8 @@ static struct test tests[] = {
     { "net arp",     test_net_arp },
     { "net ping gw", test_net_ping_gw },
     { "net udp",     test_net_udp },
+    { "net dhcp parse", test_net_dhcp_parse },
+    { "net dhcp",    test_net_dhcp },
     { "exec",        test_exec },
     { "exec glibc",  test_exec_glibc },
     { "pipe",        test_pipe },

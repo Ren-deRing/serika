@@ -99,6 +99,8 @@ notrace void start_init(void) {
 
     if (vfs_mount("proc", "/proc", "proc") != 0) printk("init: no /proc\n");
 
+    dhcp_init();
+
     /* input devices have /sys and /dev entries to make, so after the file system */
     virtio_input_init();
     hda_init();

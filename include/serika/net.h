@@ -58,7 +58,7 @@ struct netdev {
     uint8_t  mac[6];
     uint16_t mtu;
     uint32_t flags;
-    uint32_t ip, mask, gw;           /* host byte order. 0: none */
+    uint32_t ip, mask, gw, dns;      /* host byte order. 0: none */
 
     /* takes the nbuf and frees it, sent or not. net_lock is held. 0 or -errno */
     int  (*xmit)(struct netdev *dev, struct nbuf *n);
@@ -266,6 +266,30 @@ void udp_close(struct isock *sk);
 int  udp_bind_k(struct isock *sk, uint32_t addr, uint16_t port);
 int  udp_send_k(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, size_t len);
 long udp_recv_k(struct isock *sk, void *buf, size_t cap, uint32_t *saddr, uint16_t *sport, uint32_t timeout_ms);
+
+/* ---- DHCP ---- */
+
+/* what a server gave. times in seconds */
+struct dhcp_lease {
+    uint32_t ip, mask, gw, dns, server;
+    uint32_t lease, t1, t2;
+};
+
+#define DHCP_OFFER 2
+#define DHCP_ACK   5
+#define DHCP_NAK   6
+
+enum { DHCP_INIT, DHCP_SELECTING, DHCP_REQUESTING, DHCP_BOUND, DHCP_RENEWING, DHCP_REBINDING };
+
+/* the answer of a server in msg, if it is one to us (xid, hardware address): its type (OFFER, ACK, NAK) and what it gives.
+ * 0 or -EINVAL */
+int  dhcp_parse(const void *msg, size_t len, uint32_t xid, const uint8_t mac[ETH_ALEN], int *type, struct dhcp_lease *l);
+void dhcp_times(struct dhcp_lease *l);   /* T1 and T2 when the server did not say, or said what cannot be */
+
+void     dhcp_init(void);                /* the client for the first interface that is not lo, after the file system */
+int      dhcp_state(void);
+uint32_t dhcp_renewals(void);            /* how many leases were renewed */
+void     dhcp_renew_now(void);           /* as if T1 were now (a test) */
 
 /* ---- drivers ---- */
 
