@@ -84,6 +84,7 @@ static struct test tests[] = {
     { "exec gl",     test_exec_gl },
     { "exec sockets", test_exec_sockets },
     { "exec udp",    test_exec_udp },
+    { "exec dns",    test_exec_dns },
     { "exec events", test_exec_events },
     { "exec drm",    test_exec_drm },
     { "exec gbm",    test_exec_gbm },

@@ -19,3 +19,12 @@ bool test_exec_udp() {
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
     return true;
 }
+
+/* names through glibc's resolver: /etc/hosts, numbers, and with a NIC example.com from QEMU's DNS server */
+bool test_exec_dns() {
+    long status = 0;
+
+    TEST_ASSERT(run_exec("/bin/dns", &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}
