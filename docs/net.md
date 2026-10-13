@@ -47,3 +47,49 @@ waking more than it has to.
 
 Not here: other families (`AF_INET`, `AF_NETLINK`), out of band data, `SO_LINGER`, `SCM_SECURITY`, and the cleanup
 of a cycle of sockets that carry each other's files.
+
+# The IPv4 base
+
+The first part of the internet side: an interface, packets, Ethernet, ARP, IPv4 and ICMP echo. There are no sockets on it
+yet (UDP, TCP and `AF_INET` come after). The header is `serika/net.h`; the code is `net/` and, for the card,
+`drivers/builtin/net/e1000e.c`.
+
+## Packets and interfaces
+
+A packet is an `nbuf`: one 2 KiB `kmalloc` object with 64 bytes of room in front, so the headers go on as the packet
+goes down (`nbuf_push()`) and come off as it goes up (`nbuf_pull()`). It is not the `skb` of the unix sockets, which is
+something else.
+
+An interface is a `struct netdev`: name, MAC, MTU, flags (`UP`, `LOOPBACK`, `LINK`), address, mask and gateway, and two
+calls, `xmit()` (takes the packet and frees it, sent or not) and `poll()` (empties the receive ring into `net_rx()`).
+`lo` (127.0.0.1/8) is made by `netdev_init()`: it has no Ethernet, what it sends is queued and comes in again through
+`netd`. The first interface that is not `lo` gets a fixed 10.0.2.15/24 with the gateway 10.0.2.2 (QEMU's user network)
+when it is registered. TODO: DHCP.
+
+## e1000e
+
+The Intel 82574L (PCI 8086:10d3, QEMU's `-device e1000e`). It was chosen over the older e1000 because the kernel has MSI
+and no routing of the PCI interrupt lines. One transmit and one receive ring of 256 legacy descriptors, a 2 KiB buffer
+each; a received frame is copied out into an `nbuf`, and a frame to send is copied into its buffer (padded to 60). The
+interrupt (MSI) only reads `ICR` and wakes `netd`; the link is read from `STATUS` when `netd` polls. A full transmit ring
+drops the frame (`-ENOBUFS`). Not here: checksum offload, VLAN, jumbo frames, more than one queue.
+
+## The way a packet goes
+
+Receive: interrupt, `netd`, `poll()`, `net_rx()`, `eth_rx()`, `arp_rx()` or `ip_rx()`, `icmp_rx()`. Send: `ip_tx()` finds
+the route (an address of ours or 127/8 is `lo`, one in the subnet of an interface is sent to directly, the rest to the
+gateway), puts on the IP header, and `arp_tx()` finds the MAC of the next hop and `eth_tx()` puts the frame on the card.
+
+All of the state of the stack is under one mutex, `net_lock`: `netd` holds it while it works and so does whoever sends.
+A wait (`net_wait()`) lets the lock go and sleeps on `net_wq`, which `netd` wakes after each round and from its 100 ms
+tick, so a wait with a deadline looks again at least that often.
+
+## ARP and IPv4
+
+ARP has 16 entries. A packet for an address that is not known waits in the entry (up to 3) while a request goes out, again
+each second, three times; then the packets are dropped. A valid entry lives 5 minutes. A request for our address is
+answered, and the sender of any packet that speaks to us is learned.
+
+IPv4 checks the version, the header length, the total length and the checksum; takes what is for the interface's address,
+the broadcasts, or anything on `lo`; there is no forwarding. A fragment is dropped, and none is sent (DF is set, the TTL
+is 64). `icmp_ping()` sends an echo request and waits for the reply (one at a time); an echo request to us is answered.

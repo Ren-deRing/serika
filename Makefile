@@ -184,6 +184,8 @@ run: build
 		-device ide-hd,drive=disk0,bus=ide.0 \
 		-drive file=$(BUILD_DIR)/test.img,if=none,id=disk1,format=raw \
 		-device ide-hd,drive=disk1,bus=ide.1 \
+		-netdev user,id=net0 \
+		-device e1000e,netdev=net0 \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-device virtio-tablet-pci,disable-legacy=on \
 		-audiodev pipewire,id=snd0 \

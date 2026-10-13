@@ -17,6 +17,7 @@
 #include <serika/random.h>
 #include <serika/serial.h>
 #include <serika/buddy.h>
+#include <serika/net.h>
 #include <serika/slab.h>
 #include <serika/socket.h>
 #include <serika/sched.h>
@@ -84,6 +85,9 @@ notrace void start_init(void) {
 
     pci_init();
     ahci_init();
+
+    netdev_init();
+    e1000e_init();
 
     net_init();
     vfs_init();

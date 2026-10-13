@@ -4,6 +4,7 @@ DRIVERS := \
 	fb \
 	input \
 	mem \
+	net \
 	pci \
 	sound \
 	tty \
