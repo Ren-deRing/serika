@@ -16,7 +16,7 @@ EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/l
 
 # the host's busybox, static, and a link to it for each applet
 APPLETS := $(BUILD_DIR)/applets.stamp
-EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS)
+EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS) $(INITRD_DIR)/etc/pki/tls/cert.pem
 
 # the disk: an ext4 image that the kernel mounts on /usr. a tree is made as the host has it (/usr/...) and the
 # image is what is under usr
@@ -41,6 +41,10 @@ WAYLAND := $(BUILD_DIR)/wayland.stamp
 
 # the opengl es benchmark
 GLMARK2 := $(BUILD_DIR)/glmark2.stamp
+
+# the host's openssl, which busybox's wget needs for https, and the certificates it trusts (where openssl looks: /etc/pki/tls)
+OPENSSL := $(BUILD_DIR)/openssl.stamp
+CA_FILE := /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 
 .PHONY: all $(INITRD) $(DISK) $(TESTDISK)
 
@@ -81,6 +85,16 @@ $(TOOLCHAIN): toolchain.sh /usr/bin/clang
 	@./toolchain.sh $(DISK_ROOT)
 	@touch $@
 
+$(OPENSSL): openssl.sh /usr/bin/openssl
+	@echo "SSL   : openssl"
+	@./openssl.sh $(DISK_ROOT)
+	@touch $@
+
+$(INITRD_DIR)/etc/pki/tls/cert.pem: $(CA_FILE)
+	@mkdir -p $(dir $@)
+	@echo "CP    : $@"
+	@cp -L $< $@
+
 $(INITRD_DIR)/lib64/%: /lib64/%
 	@mkdir -p $(dir $@)
 	@echo "CP    : $@"
@@ -94,7 +108,7 @@ $(INITRD): $(EXEC)
 
 # no journal and no checksums: the kernel reads it without. room for what is in it and some for the tail of each block,
 # and 512 MiB to write into
-$(DISK): $(MESA) $(TOOLCHAIN) $(WAYLAND) $(GLMARK2) $(shell find $(DISK_DIR) -type f)
+$(DISK): $(MESA) $(TOOLCHAIN) $(WAYLAND) $(GLMARK2) $(OPENSSL) $(shell find $(DISK_DIR) -type f)
 	@echo "EXT4  : $@"
 	@mkdir -p $(DISK_ROOT)/usr
 	@cp -r $(DISK_DIR)/. $(DISK_ROOT)/usr/

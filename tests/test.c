@@ -89,6 +89,7 @@ static struct test tests[] = {
     { "exec tcp",    test_exec_tcp },
     { "exec tcp loss", test_exec_tcp_loss },
     { "exec tcp net", test_exec_tcp_net },
+    { "exec openssl", test_exec_openssl },
     { "exec events", test_exec_events },
     { "exec drm",    test_exec_drm },
     { "exec gbm",    test_exec_gbm },

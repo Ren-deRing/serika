@@ -1,6 +1,8 @@
+#include <serika/fcntl.h>
 #include <serika/net.h>
 #include <serika/printk.h>
 #include <serika/syscall.h>
+#include <serika/vfs.h>
 
 #include <tests/test.h>
 
@@ -62,5 +64,22 @@ bool test_exec_tcp_net() {
 
     TEST_ASSERT(run_exec_mode_ms("/bin/tcp", "net", 60000, &status) > 0);
     TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}
+
+/* the host's openssl runs (busybox's wget starts it for https): its libraries load and it says its version */
+bool test_exec_openssl() {
+    struct file *f;
+    long status = 0;
+
+    if (vfs_open("/usr/bin/openssl", O_RDONLY, 0, &f) != 0) {
+        printk("openssl: not on /usr -- skipped\n");
+        return true;
+    }
+
+    vfs_close(f);
+
+    TEST_ASSERT(run_exec_mode_ms("/usr/bin/openssl", "version", 20000, &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0);
     return true;
 }
