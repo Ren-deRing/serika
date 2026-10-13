@@ -6,11 +6,17 @@ export HOME=/tmp
 export FONTCONFIG_FILE=/usr/share/fontconfig/fonts.conf
 export XDG_CONFIG_DIRS=/usr/etc/xdg
 export TERMINFO_DIRS=/usr/share/terminfo
+export WAYBAR_CONFIG_DIR=/usr/etc/xdg/waybar # waybar does not look in XDG_CONFIG_DIRS
+export ALSOFT_DRIVERS=oss # openal: /dev/dsp, not the sound servers and alsa it would try first
+export NO_AT_BRIDGE=1 # gtk (waybar) would look for the accessibility bus on d-bus, which is not here
 export LIBSEAT_BACKEND=noop
 export WLR_BACKENDS=drm,libinput
 export WLR_DRM_DEVICES=/dev/dri/card0
 export WLR_DRM_NO_ATOMIC=1
-export WLR_RENDERER=gles2
-export WLR_RENDERER_ALLOW_SOFTWARE=1
+export WLR_RENDERER=${WLR_RENDERER:-pixman}
+
+# the session bus, before anything that would look for it
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+dbus-daemon --session --fork --address="$DBUS_SESSION_BUS_ADDRESS"
 
 exec labwc "$@"

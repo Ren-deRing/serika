@@ -46,12 +46,22 @@ file takes its flip off with `timer_del()`.
 
 A framebuffer taken off while shown leaves the crtc without one, as in linux; what was on the screen stays.
 
+The framebuffer is write combining memory, slow to write and not to be read: a shadow in ram is what the screen has,
+and a copy writes only the 64 byte blocks that differ from it. a mode set or dpms makes it stale, and that copy writes
+everything.
+
 ## Not here
 
 Atomic, cursor and overlay planes, `IN_FORMATS` and modifiers, other modes and outputs, `WAIT_VBLANK`, explicit sync
 (syncobjs), importing a dma-buf of another driver, gamma, and any sysfs: libdrm's device listing
 (`drmGetDevices2`) and mesa's loader look at `/sys/dev/char/226:0` (mesa says "failed to retrieve device information"
 and goes on).
+
+No sync of any kind, so a buffer is shown as it is when the flip comes. A compositor that draws with llvmpipe (gles2)
+flips before llvmpipe's threads are done with the frame, which then shows torn until the next flip: llvmpipe waits for
+them only when it is asked for a fence fd (explicit sync), and that needs atomic, syncobjs, `IN_FENCE_FD`, `/dev/udmabuf`
+and `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`. Compositors here draw with pixman, as wlroots and weston do on their own where
+there is no gpu.
 
 ## Tests
 
