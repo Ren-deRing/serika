@@ -38,6 +38,7 @@ struct usock *unix_create(int type) {
 
     memset(sk, 0, sizeof(*sk));
 
+    sk->sock.ops = &unix_proto_ops;
     sk->refs   = 1;
     sk->type   = type;
     sk->sndbuf = sk->rcvbuf = UNIX_RCVBUF;

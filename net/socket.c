@@ -29,8 +29,14 @@
 
 static const struct inode_ops sock_ops;
 
-static struct usock *sock_of(struct file *f) {
+/* the socket of a file, of whatever kind: NULL if it is not one */
+static struct sock *sock_of(struct file *f) {
     return f->inode->ops == &sock_ops ? f->inode->priv : NULL;
+}
+
+/* ... and of the unix kind, in the functions that sock_of()'s ops table has brought here */
+static struct usock *usock_of(struct file *f) {
+    return f->inode->priv;
 }
 
 /* ---- buffers: kmalloc stops at a page ---- */
@@ -65,7 +71,7 @@ static void kbuf_free(struct kbuf *b) {
 
 /* ---- the file of a socket ---- */
 
-static long sock_read(struct file *f, void *buf, size_t n) {
+static long unix_op_read(struct file *f, void *buf, size_t n) {
     struct usock *sk = f->inode->priv;
     struct unix_rx rx = { .buf = buf, .cap = n };
 
@@ -75,7 +81,7 @@ static long sock_read(struct file *f, void *buf, size_t n) {
     return r;
 }
 
-static long sock_write(struct file *f, const void *buf, size_t n) {
+static long unix_op_write(struct file *f, const void *buf, size_t n) {
     struct usock *sk = f->inode->priv;
     struct unix_msg m = { .data = buf, .len = n };
 
@@ -85,13 +91,11 @@ static long sock_write(struct file *f, const void *buf, size_t n) {
     return r;
 }
 
-static uint32_t sock_poll(struct inode *inode, uint32_t fflags, struct poll_table *pt) {
-    (void)fflags;
-
+static uint32_t unix_op_poll(struct inode *inode, struct poll_table *pt) {
     return unix_poll(inode->priv, pt);
 }
 
-static long sock_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg) {
+static long unix_op_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg) {
     struct usock *sk = inode->priv;
     int32_t n;
 
@@ -109,14 +113,51 @@ static long sock_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg
 }
 
 /* the last file of it is closed. the inode may live on: a path names it */
-static void sock_release(struct inode *inode, uint32_t fflags) {
-    (void)fflags;
-
+static void unix_op_release(struct inode *inode) {
     unix_release(inode->priv);
 }
 
+static void unix_op_put(struct sock *sk) {
+    unix_put((struct usock *)sk);
+}
+
+/* what the file of a socket does is up to the kind of socket */
+static long sock_read(struct file *f, void *buf, size_t n) {
+    struct sock *sk = f->inode->priv;
+
+    return sk->ops->read(f, buf, n);
+}
+
+static long sock_write(struct file *f, const void *buf, size_t n) {
+    struct sock *sk = f->inode->priv;
+
+    return sk->ops->write(f, buf, n);
+}
+
+static uint32_t sock_poll(struct inode *inode, uint32_t fflags, struct poll_table *pt) {
+    struct sock *sk = inode->priv;
+
+    (void)fflags;
+    return sk->ops->poll(inode, pt);
+}
+
+static long sock_ioctl(struct inode *inode, unsigned long cmd, unsigned long arg) {
+    struct sock *sk = inode->priv;
+
+    return sk->ops->ioctl(inode, cmd, arg);
+}
+
+static void sock_release(struct inode *inode, uint32_t fflags) {
+    struct sock *sk = inode->priv;
+
+    (void)fflags;
+    sk->ops->release(inode);
+}
+
 static void sock_evict(struct inode *inode) {
-    unix_put(inode->priv);
+    struct sock *sk = inode->priv;
+
+    sk->ops->put(sk);
 }
 
 static const struct inode_ops sock_ops = {
@@ -130,10 +171,10 @@ static const struct inode_ops sock_ops = {
 };
 
 /* a file for the socket, which takes the caller's reference whether it works or not */
-static struct file *sock_file_new(struct usock *sk, uint32_t flags) {
+static struct file *sock_file_new(struct sock *sk, uint32_t flags) {
     struct inode *inode = inode_alloc(&sock_ops, S_IFSOCK | 0777);
     if (!inode) {
-        unix_put(sk);
+        sk->ops->put(sk);
         return NULL;
     }
 
@@ -176,7 +217,7 @@ long sys_socket(long domain, long type, long protocol) {
 
     sk->netlink = domain == AF_NETLINK;
 
-    struct file *f = sock_file_new(sk, type);
+    struct file *f = sock_file_new(&sk->sock, type);
     if (!f) return -ENOMEM;
 
     int fd = fd_install(current_task()->files, f, type & SOCK_CLOEXEC, 0);
@@ -198,7 +239,7 @@ long sys_socketpair(long domain, long type, long protocol, long usv) {
 
     unix_pair(a, b);
 
-    struct file *fa = sock_file_new(a, type), *fb = sock_file_new(b, type);
+    struct file *fa = sock_file_new(&a->sock, type), *fb = sock_file_new(&b->sock, type);
     if (!fa || !fb) {
         if (fa) vfs_close(fa);
         if (fb) vfs_close(fb);
@@ -334,7 +375,8 @@ static struct usock *find_target(const struct unix_addr *a, const char *path, in
     *err = vfs_open(path, O_PATH, 0, &pf);
     if (*err) return NULL;
 
-    if (!S_ISSOCK(pf->inode->mode) || pf->inode->ops != &sock_ops) {
+    if (!S_ISSOCK(pf->inode->mode) || pf->inode->ops != &sock_ops ||
+        ((struct sock *)pf->inode->priv)->ops != &unix_proto_ops) {
         *err = -ECONNREFUSED;
     } else {
         sk = pf->inode->priv;
@@ -347,26 +389,15 @@ static struct usock *find_target(const struct unix_addr *a, const char *path, in
 
 /* ---- bind, listen, connect, accept ---- */
 
-long sys_bind(long fd, long uaddr, long ulen) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
+static int unix_op_bind(struct file *f, long uaddr, long ulen) {
+    struct usock *sk = usock_of(f);
     struct unix_addr a;
     char *path;
     int err;
 
-    if (!sk) {
-        vfs_close(f);
-        return -ENOTSOCK;
-    }
+    if (sk->netlink) return 0; /* a sockaddr_nl: the groups it would hear are of no use here */
 
-    if (sk->netlink) { /* a sockaddr_nl: the groups it would hear are of no use here */
-        vfs_close(f);
-        return 0;
-    }
-
-    if ((err = addr_from_user(uaddr, ulen, &a, &path))) goto out;
+    if ((err = addr_from_user(uaddr, ulen, &a, &path))) return err;
 
     if (name_of(sk, &(struct unix_addr){ 0 })) {
         err = -EINVAL; /* bound already */
@@ -388,35 +419,18 @@ long sys_bind(long fd, long uaddr, long ulen) {
 
 out_path:
     kfree(path);
-out:
-    vfs_close(f);
     return err;
 }
 
-long sys_listen(long fd, long backlog) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
-    long err = sk ? unix_listen(sk, backlog) : -ENOTSOCK;
-
-    vfs_close(f);
-    return err;
+static int unix_op_listen(struct file *f, long backlog) {
+    return unix_listen(usock_of(f), backlog);
 }
 
-long sys_connect(long fd, long uaddr, long ulen) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
+static int unix_op_connect(struct file *f, long uaddr, long ulen) {
+    struct usock *sk = usock_of(f);
     struct unix_addr a;
     char *path;
     long err;
-
-    if (!sk) {
-        vfs_close(f);
-        return -ENOTSOCK;
-    }
 
     /* a datagram socket can be pointed at nothing again: the family AF_UNSPEC */
     uint16_t family;
@@ -428,7 +442,6 @@ long sys_connect(long fd, long uaddr, long ulen) {
         spin_unlock_irqrestore(&sk->lock, fl);
 
         if (old) unix_put(old);
-        vfs_close(f);
         return 0;
     }
 
@@ -450,26 +463,14 @@ long sys_connect(long fd, long uaddr, long ulen) {
         kfree(path);
     }
 
-    vfs_close(f);
     return err;
 }
 
-long sys_accept4(long fd, long uaddr, long ulenp, long flags) {
-    if (flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) return -EINVAL;
-
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
-    if (!sk) {
-        vfs_close(f);
-        return -ENOTSOCK;
-    }
-
+static long unix_op_accept(struct file *f, long uaddr, long ulenp, long flags) {
+    struct usock *sk = usock_of(f);
     int err;
     struct usock *srv = unix_accept(sk, f->flags & O_NONBLOCK, &err);
 
-    vfs_close(f);
     if (!srv) return err;
 
     /* who connected: the other end of the new one */
@@ -488,7 +489,7 @@ long sys_accept4(long fd, long uaddr, long ulenp, long flags) {
         unix_put(client);
     }
 
-    struct file *nf = sock_file_new(srv, flags);
+    struct file *nf = sock_file_new(&srv->sock, flags);
     if (!nf) return -ENOMEM;
 
     int nfd = fd_install(current_task()->files, nf, flags & SOCK_CLOEXEC, 0);
@@ -505,8 +506,54 @@ long sys_accept4(long fd, long uaddr, long ulenp, long flags) {
     return nfd;
 }
 
+long sys_accept4(long fd, long uaddr, long ulenp, long flags) {
+    if (flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) return -EINVAL;
+
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long ret = sk ? sk->ops->accept(f, uaddr, ulenp, flags) : -ENOTSOCK;
+
+    vfs_close(f);
+    return ret;
+}
+
 long sys_accept(long fd, long uaddr, long ulenp) {
     return sys_accept4(fd, uaddr, ulenp, 0);
+}
+
+long sys_bind(long fd, long uaddr, long ulen) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->bind(f, uaddr, ulen) : -ENOTSOCK;
+
+    vfs_close(f);
+    return err;
+}
+
+long sys_listen(long fd, long backlog) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->listen(f, backlog) : -ENOTSOCK;
+
+    vfs_close(f);
+    return err;
+}
+
+long sys_connect(long fd, long uaddr, long ulen) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->connect(f, uaddr, ulen) : -ENOTSOCK;
+
+    vfs_close(f);
+    return err;
 }
 
 /* struct sockaddr_nl: the family, a pad, the port and the groups */
@@ -517,14 +564,28 @@ struct sockaddr_nl_user {
     uint32_t groups;
 };
 
-long sys_getsockname(long fd, long uaddr, long ulenp) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
+static long unix_op_getname(struct file *f, long uaddr, long ulenp, bool peer) {
+    struct usock *sk = usock_of(f);
     struct unix_addr a;
 
-    if (sk && sk->netlink) {
+    if (peer) {
+        uint64_t fl = spin_lock_irqsave(&sk->lock);
+        struct usock *other = sk->peer;
+
+        if (other) unix_get(other);
+
+        spin_unlock_irqrestore(&sk->lock, fl);
+
+        if (!other) return -ENOTCONN;
+
+        bool named = name_of(other, &a);
+        long err = addr_to_user(uaddr, ulenp, &a, named);
+
+        unix_put(other);
+        return err;
+    }
+
+    if (sk->netlink) {
         struct sockaddr_nl_user nl = { .family = AF_NETLINK, .pid = sys_getpid() };
         int32_t room, total = sizeof(nl);
         long err = copy_from_user(&room, ulenp, sizeof(room));
@@ -532,12 +593,20 @@ long sys_getsockname(long fd, long uaddr, long ulenp) {
         if (!err) err = copy_to_user(uaddr, &nl, room < total ? (size_t)(room > 0 ? room : 0) : sizeof(nl));
         if (!err) err = copy_to_user(ulenp, &total, sizeof(total));
 
-        vfs_close(f);
         return err;
     }
 
-    bool named = sk && name_of(sk, &a);
-    long err = sk ? addr_to_user(uaddr, ulenp, &a, named) : -ENOTSOCK;
+    bool named = name_of(sk, &a);
+
+    return addr_to_user(uaddr, ulenp, &a, named);
+}
+
+long sys_getsockname(long fd, long uaddr, long ulenp) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->getname(f, uaddr, ulenp, false) : -ENOTSOCK;
 
     vfs_close(f);
     return err;
@@ -547,30 +616,15 @@ long sys_getpeername(long fd, long uaddr, long ulenp) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
-    struct usock *sk = sock_of(f);
-    long err = -ENOTSOCK;
-
-    if (sk) {
-        uint64_t fl = spin_lock_irqsave(&sk->lock);
-        struct usock *peer = sk->peer;
-
-        if (peer) unix_get(peer);
-
-        spin_unlock_irqrestore(&sk->lock, fl);
-
-        if (!peer) {
-            err = -ENOTCONN;
-        } else {
-            struct unix_addr a;
-            bool named = name_of(peer, &a);
-
-            err = addr_to_user(uaddr, ulenp, &a, named);
-            unix_put(peer);
-        }
-    }
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->getname(f, uaddr, ulenp, true) : -ENOTSOCK;
 
     vfs_close(f);
     return err;
+}
+
+static int unix_op_shutdown(struct file *f, long how) {
+    return unix_shutdown(usock_of(f), how);
 }
 
 long sys_shutdown(long fd, long how) {
@@ -579,8 +633,8 @@ long sys_shutdown(long fd, long how) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
-    struct usock *sk = sock_of(f);
-    long err = sk ? unix_shutdown(sk, how) : -ENOTSOCK;
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->shutdown(f, how) : -ENOTSOCK;
 
     vfs_close(f);
     return err;
@@ -666,7 +720,8 @@ static int parse_control(struct msghdr *mh, struct unix_msg *m) {
 }
 
 /* a stream is sent in pieces: each is copied out of the iovecs into one kernel buffer and sent whole */
-static long send_msg(struct file *f, struct usock *sk, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+static long unix_op_sendmsg(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+    struct usock *sk = usock_of(f);
     bool nonblock = (f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT);
     struct unix_msg m = { 0 };
     struct kbuf kb = { 0 };
@@ -823,7 +878,8 @@ static int build_control(struct msghdr *mh, struct usock *sk, struct unix_rx *rx
     return err;
 }
 
-static long recv_msg(struct file *f, struct usock *sk, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+static long unix_op_recvmsg(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+    struct usock *sk = usock_of(f);
     bool nonblock = (f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT);
     struct unix_rx rx = { 0 };
     struct kbuf kb = { 0 };
@@ -916,7 +972,7 @@ static long msg_op(long fd, struct msghdr *mh, unsigned flags, bool send) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
-    struct usock *sk = sock_of(f);
+    struct sock *sk = sock_of(f);
     struct kbuf iov;
     long ret;
 
@@ -930,7 +986,7 @@ static long msg_op(long fd, struct msghdr *mh, unsigned flags, bool send) {
         return ret;
     }
 
-    ret = send ? send_msg(f, sk, mh, iov.p, flags) : recv_msg(f, sk, mh, iov.p, flags);
+    ret = send ? sk->ops->sendmsg(f, mh, iov.p, flags) : sk->ops->recvmsg(f, mh, iov.p, flags);
 
     kbuf_free(&iov);
     vfs_close(f);
@@ -966,8 +1022,8 @@ long sys_sendto(long fd, long ubuf, long len, long flags, long uaddr, long ulen)
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
-    struct usock *sk = sock_of(f);
-    long ret = sk ? send_msg(f, sk, &mh, &iov, flags) : -ENOTSOCK;
+    struct sock *sk = sock_of(f);
+    long ret = sk ? sk->ops->sendmsg(f, &mh, &iov, flags) : -ENOTSOCK;
 
     vfs_close(f);
     return ret;
@@ -990,8 +1046,8 @@ long sys_recvfrom(long fd, long ubuf, long len, long flags, long uaddr, long ule
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
 
-    struct usock *sk = sock_of(f);
-    long ret = sk ? recv_msg(f, sk, &mh, &iov, flags) : -ENOTSOCK;
+    struct sock *sk = sock_of(f);
+    long ret = sk ? sk->ops->recvmsg(f, &mh, &iov, flags) : -ENOTSOCK;
 
     vfs_close(f);
 
@@ -1075,23 +1131,12 @@ static bool opt_is_flag(long name) {
     return false;
 }
 
-long sys_setsockopt(long fd, long level, long name, long uval, long len) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
+static long unix_op_setsockopt(struct file *f, long level, long name, long uval, long len) {
+    struct usock *sk = usock_of(f);
     long err = 0;
     int32_t v = 0;
 
-    if (!sk) {
-        vfs_close(f);
-        return -ENOTSOCK;
-    }
-
-    if (level != SOL_SOCKET) {
-        vfs_close(f);
-        return -ENOPROTOOPT;
-    }
+    if (level != SOL_SOCKET) return -ENOPROTOOPT;
 
     if (name == SO_RCVTIMEO || name == SO_SNDTIMEO) {
         struct timeval_user tv;
@@ -1139,33 +1184,29 @@ long sys_setsockopt(long fd, long level, long name, long uval, long len) {
         }
     }
 
+    return err;
+}
+
+long sys_setsockopt(long fd, long level, long name, long uval, long len) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->setsockopt(f, level, name, uval, len) : -ENOTSOCK;
+
     vfs_close(f);
     return err;
 }
 
-long sys_getsockopt(long fd, long level, long name, long uval, long ulenp) {
-    struct file *f = fd_get(fd);
-    if (!f) return -EBADF;
-
-    struct usock *sk = sock_of(f);
+static long unix_op_getsockopt(struct file *f, long level, long name, long uval, long ulenp) {
+    struct usock *sk = usock_of(f);
     int32_t ulen;
     long err;
 
-    if (!sk) {
-        vfs_close(f);
-        return -ENOTSOCK;
-    }
+    if (level != SOL_SOCKET) return -ENOPROTOOPT;
 
-    if (level != SOL_SOCKET) {
-        vfs_close(f);
-        return -ENOPROTOOPT;
-    }
-
-    if ((err = copy_from_user(&ulen, ulenp, sizeof(ulen)))) goto out;
-    if (ulen < 0) {
-        err = -EINVAL;
-        goto out;
-    }
+    if ((err = copy_from_user(&ulen, ulenp, sizeof(ulen)))) return err;
+    if (ulen < 0) return -EINVAL;
 
     union {
         int32_t              i;
@@ -1218,15 +1259,43 @@ long sys_getsockopt(long fd, long level, long name, long uval, long ulenp) {
 
     spin_unlock_irqrestore(&sk->lock, fl);
 
-    if (err) goto out;
+    if (err) return err;
 
     {
         int32_t n = ulen < (int32_t)size ? ulen : (int32_t)size, outlen = size;
 
-        if ((n && (err = copy_to_user(uval, &out, n))) || (err = copy_to_user(ulenp, &outlen, sizeof(outlen)))) goto out;
+        if ((n && (err = copy_to_user(uval, &out, n))) || (err = copy_to_user(ulenp, &outlen, sizeof(outlen)))) return err;
     }
 
-out:
+    return 0;
+}
+
+long sys_getsockopt(long fd, long level, long name, long uval, long ulenp) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+
+    struct sock *sk = sock_of(f);
+    long err = sk ? sk->ops->getsockopt(f, level, name, uval, ulenp) : -ENOTSOCK;
+
     vfs_close(f);
     return err;
 }
+
+const struct proto_ops unix_proto_ops = {
+    .bind       = unix_op_bind,
+    .connect    = unix_op_connect,
+    .listen     = unix_op_listen,
+    .accept     = unix_op_accept,
+    .getname    = unix_op_getname,
+    .shutdown   = unix_op_shutdown,
+    .sendmsg    = unix_op_sendmsg,
+    .recvmsg    = unix_op_recvmsg,
+    .setsockopt = unix_op_setsockopt,
+    .getsockopt = unix_op_getsockopt,
+    .read       = unix_op_read,
+    .write      = unix_op_write,
+    .poll       = unix_op_poll,
+    .ioctl      = unix_op_ioctl,
+    .release    = unix_op_release,
+    .put        = unix_op_put,
+};

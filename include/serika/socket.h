@@ -139,8 +139,46 @@ struct skb {
     bool              has_from;
 };
 
+/* every kind of socket starts with this, and the inode of a socket points to it: what the calls on it do is the kind's. the
+ * kinds are unix (below) and inet (net/inet.h). the calls are those of socket(2); f is the file of the socket, a user
+ * address or buffer is in user memory, and the return is a value or -errno */
+struct file;
+struct inode;
+struct iovec;
+struct poll_table;
+struct sock;
+
+struct proto_ops {
+    int      (*bind)(struct file *f, long uaddr, long ulen);
+    int      (*connect)(struct file *f, long uaddr, long ulen);
+    int      (*listen)(struct file *f, long backlog);
+    long     (*accept)(struct file *f, long uaddr, long ulenp, long flags);   /* the new file's descriptor */
+    long     (*getname)(struct file *f, long uaddr, long ulenp, bool peer);
+    int      (*shutdown)(struct file *f, long how);
+    long     (*sendmsg)(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags);
+    long     (*recvmsg)(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags);
+    long     (*setsockopt)(struct file *f, long level, long name, long uval, long len);
+    long     (*getsockopt)(struct file *f, long level, long name, long uval, long ulenp);
+
+    /* the file's own: read(2), write(2), poll, ioctl */
+    long     (*read)(struct file *f, void *buf, size_t n);
+    long     (*write)(struct file *f, const void *buf, size_t n);
+    uint32_t (*poll)(struct inode *inode, struct poll_table *pt);
+    long     (*ioctl)(struct inode *inode, unsigned long cmd, unsigned long arg);
+
+    void     (*release)(struct inode *inode); /* the last file of it is closed (the inode may live on) */
+    void     (*put)(struct sock *sk);         /* the inode's reference to it goes */
+};
+
+struct sock {
+    const struct proto_ops *ops;
+};
+
+extern const struct proto_ops unix_proto_ops;
+
 /* a unix socket. sk->lock covers all of it except what is marked, and no code holds two of them */
 struct usock {
+    struct sock      sock;
     uint32_t         refs;       /* atomic: the inode, a peer, the accept queue, whoever is using it */
     spinlock_t       lock;
     int              type;
