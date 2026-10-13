@@ -5,6 +5,7 @@ DRIVERS := \
 	input \
 	mem \
 	pci \
+	sound \
 	tty \
 	serial \
 	virtio

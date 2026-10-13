@@ -53,6 +53,7 @@ static struct test tests[] = {
     { "pipe",        test_pipe },
     { "tty ldisc",   test_tty_ldisc },
     { "exec pty",    test_exec_pty },
+    { "hda play",    test_hda_play },
     { "exec files",  test_exec_files },
     { "exec busybox", test_exec_busybox },
     { "exec syscalls", test_exec_syscalls },

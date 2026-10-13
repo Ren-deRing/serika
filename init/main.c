@@ -8,6 +8,7 @@
 #include <serika/irq.h>
 #include <serika/patch.h>
 #include <serika/page.h>
+#include <serika/sound.h>
 #include <serika/panic.h>
 #include <serika/pci.h>
 #include <serika/pmap.h>
@@ -94,6 +95,7 @@ notrace void start_init(void) {
 
     /* input devices have /sys and /dev entries to make, so after the file system */
     virtio_input_init();
+    hda_init();
     
     test_run_all();
 

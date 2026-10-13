@@ -12,6 +12,7 @@
 #define PCI_CMD_MASTER   0x4
 
 #define PCI_CAP_VENDOR   0x09 /* virtio's configuration structures are in these */
+#define PCI_CAP_MSI      0x05
 #define PCI_CAP_MSIX     0x11
 
 #define PCI_BARS 6
@@ -44,6 +45,9 @@ void pci_enable(struct pci_dev *d); /* memory space and bus mastering */
 
 /* a memory bar mapped uncached, all of it. NULL if it is not one or there is no room */
 volatile uint8_t *pci_map_bar(struct pci_dev *d, int bar);
+
+/* the device's one message (msi, not msi-x) to the handler. 0 or -errno (-EOPNOTSUPP: a device without msi) */
+int pci_msi_request(struct pci_dev *d, irq_handler_t handler, void *data);
 
 /* entry of the device's msi-x table to the handler. 0 or -errno (-EOPNOTSUPP: a device without msi-x) */
 int pci_msix_request(struct pci_dev *d, unsigned entry, irq_handler_t handler, void *data);

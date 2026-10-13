@@ -184,6 +184,9 @@ run: build
 		-device virtio-blk-pci,drive=disk0,disable-legacy=on \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-device virtio-tablet-pci,disable-legacy=on \
+		-audiodev pipewire,id=snd0 \
+		-device intel-hda \
+		-device hda-output,audiodev=snd0 \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
 #		-S -s
 

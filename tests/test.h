@@ -98,6 +98,7 @@ bool test_exec_files();
 bool test_pipe();
 bool test_tty_ldisc();
 bool test_exec_pty();
+bool test_hda_play();
 bool test_exec_busybox();
 bool test_exec_syscalls();
 bool test_exec_gl();

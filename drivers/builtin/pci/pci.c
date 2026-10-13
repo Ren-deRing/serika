@@ -230,3 +230,40 @@ int pci_msix_request(struct pci_dev *d, unsigned entry, irq_handler_t handler, v
     pci_write16(d, cap + MSIX_CONTROL, (control | MSIX_ENABLE) & ~MSIX_FUNC_MASK);
     return 0;
 }
+
+#define MSI_CONTROL 2 /* from the capability */
+#define MSI_ADDR    4
+
+#define MSI_ENABLE  0x0001
+#define MSI_64BIT   0x0080
+#define MSI_VECTORS 0x0070 /* the number it is enabled for: one */
+
+#define PCI_CMD_INTX_OFF 0x0400
+
+int pci_msi_request(struct pci_dev *d, irq_handler_t handler, void *data) {
+    uint8_t cap = pci_find_cap(d, PCI_CAP_MSI, 0);
+    if (!cap) return -EOPNOTSUPP;
+
+    uint64_t addr;
+    uint32_t msg;
+
+    int err = irq_request_msi(handler, data, &addr, &msg);
+    if (err) return err;
+
+    uint16_t control = pci_read16(d, cap + MSI_CONTROL);
+
+    pci_write32(d, cap + MSI_ADDR, (uint32_t)addr);
+
+    if (control & MSI_64BIT) {
+        pci_write32(d, cap + MSI_ADDR + 4, addr >> 32);
+        pci_write16(d, cap + MSI_ADDR + 8, msg);
+    } else {
+        pci_write16(d, cap + MSI_ADDR + 4, msg);
+    }
+
+    pci_write16(d, cap + MSI_CONTROL, (control & ~MSI_VECTORS) | MSI_ENABLE);
+
+    /* the line is not used with a message */
+    pci_write16(d, PCI_COMMAND, pci_read16(d, PCI_COMMAND) | PCI_CMD_INTX_OFF);
+    return 0;
+}
