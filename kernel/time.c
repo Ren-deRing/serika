@@ -7,6 +7,7 @@
 #include <serika/sched.h>
 #include <serika/signal.h>
 #include <serika/syscall.h>
+#include <serika/task.h>
 #include <serika/timer.h>
 #include <serika/wait.h>
 
@@ -126,14 +127,19 @@ long sys_time(long utloc) {
 static spinlock_t timer_lock = SPINLOCK_INITIALIZER;
 static list_node  timers = LIST_HEAD_INIT(timers);
 
-void timer_add(struct timer *t) {
-    uint64_t flags = spin_lock_irqsave(&timer_lock);
-
+/* timer_lock held */
+static void timer_add_locked(struct timer *t) {
     list_node *at = &timers;
     while (at->next != &timers && container_of(at->next, struct timer, node)->expires <= t->expires) at = at->next;
 
     __list_add(&t->node, at, at->next);
     t->queued = true;
+}
+
+void timer_add(struct timer *t) {
+    uint64_t flags = spin_lock_irqsave(&timer_lock);
+
+    timer_add_locked(t);
 
     spin_unlock_irqrestore(&timer_lock, flags);
 }
@@ -261,4 +267,120 @@ long sys_clock_nanosleep(long clk, long flags, long ureq, long urem) {
 
     if (urem && !(flags & TIMER_ABSTIME) && put_left(urem, deadline) != 0) return -EFAULT;
     return -EINTR;
+}
+
+/* ---- setitimer, getitimer, alarm: the real-time timer of a process. SIGALRM goes to its leader; the timer is stopped when the
+ * process is done (task_dead()). the other two timers (virtual, profiling) are taken and never fire: there is no time of the
+ * process in user mode to count ---- */
+
+#define ITIMER_REAL 0
+
+struct itimerval_user {
+    int64_t interval_sec, interval_usec;
+    int64_t value_sec, value_usec;
+};
+
+/* from the timer interrupt, timer_lock held */
+static void itimer_fn(struct timer *t) {
+    struct tgroup *g = container_of(t, struct tgroup, itimer);
+    struct ksiginfo info = { .signo = SIGALRM, .code = SI_KERNEL };
+
+    send_signal(g->leader, SIGALRM, &info);
+
+    if (g->itimer_interval) {
+        t->expires = rdtsc() + g->itimer_interval; /* from now: not in the past, which would run it over and over */
+        timer_add_locked(t);
+    }
+}
+
+static uint64_t usec_to_tsc(int64_t sec, int64_t usec) {
+    uint64_t freq = this_cpu_read(tsc_freq_hz);
+
+    return sec * freq + usec * freq / 1000000;
+}
+
+static void tsc_to_usec(uint64_t tsc, int64_t *sec, int64_t *usec) {
+    uint64_t freq = this_cpu_read(tsc_freq_hz);
+
+    *sec  = tsc / freq;
+    *usec = tsc % freq * 1000000 / freq;
+}
+
+/* what is left of the timer, and its interval, in ticks */
+static void itimer_read(struct tgroup *g, uint64_t *left, uint64_t *interval) {
+    uint64_t now = rdtsc();
+
+    *left     = g->itimer.queued && g->itimer.expires > now ? g->itimer.expires - now : 0;
+    *interval = g->itimer_interval;
+}
+
+static int itimer_put(long uvalue, uint64_t left, uint64_t interval) {
+    struct itimerval_user v;
+
+    tsc_to_usec(interval, &v.interval_sec, &v.interval_usec);
+    tsc_to_usec(left, &v.value_sec, &v.value_usec);
+
+    return copy_to_user(uvalue, &v, sizeof(v));
+}
+
+long sys_getitimer(long which, long uvalue) {
+    struct tgroup *g = current_task()->group;
+    uint64_t left = 0, interval = 0;
+
+    if (which < 0 || which > 2) return -EINVAL;
+    if (!g) return -EINVAL;
+
+    if (which == ITIMER_REAL) itimer_read(g, &left, &interval);
+
+    return itimer_put(uvalue, left, interval);
+}
+
+/* value 0 stops it. an interval makes it fire again that long after each */
+static void itimer_set(struct tgroup *g, uint64_t value, uint64_t interval) {
+    timer_del(&g->itimer);
+
+    g->itimer_interval = interval;
+
+    if (!value) return;
+
+    g->itimer.expires = rdtsc() + value;
+    g->itimer.fn      = itimer_fn;
+    timer_add(&g->itimer);
+}
+
+long sys_setitimer(long which, long unew, long uold) {
+    struct tgroup *g = current_task()->group;
+    struct itimerval_user v = { 0 };
+
+    if (which < 0 || which > 2) return -EINVAL;
+    if (!g) return -EINVAL;
+    if (!unew) return -EFAULT;
+
+    int err = copy_from_user(&v, unew, sizeof(v));
+    if (err) return err;
+
+    if (v.interval_sec < 0 || v.interval_usec < 0 || v.interval_usec >= 1000000 ||
+        v.value_sec < 0 || v.value_usec < 0 || v.value_usec >= 1000000) return -EINVAL;
+
+    uint64_t left = 0, interval = 0;
+
+    if (which != ITIMER_REAL) return uold ? itimer_put(uold, 0, 0) : 0;
+
+    itimer_read(g, &left, &interval);
+
+    itimer_set(g, usec_to_tsc(v.value_sec, v.value_usec), usec_to_tsc(v.interval_sec, v.interval_usec));
+
+    return uold ? itimer_put(uold, left, interval) : 0;
+}
+
+long sys_alarm(long seconds) {
+    struct tgroup *g = current_task()->group;
+    uint64_t left, interval, freq = this_cpu_read(tsc_freq_hz);
+
+    if (!g) return -EINVAL;
+
+    itimer_read(g, &left, &interval);
+    itimer_set(g, (uint64_t)(uint32_t)seconds * freq, 0);
+
+    return (left + freq - 1) / freq; /* the seconds that were left, rounded up */
 }

@@ -39,6 +39,9 @@
 #define SYS_DUP2             33
 #define SYS_PAUSE            34
 #define SYS_NANOSLEEP        35
+#define SYS_GETITIMER        36
+#define SYS_ALARM            37
+#define SYS_SETITIMER        38
 #define SYS_GETPID           39
 #define SYS_SENDFILE         40
 #define SYS_SOCKET           41
@@ -322,6 +325,9 @@ long sys_time(long utloc);
 long sys_clock_gettime(long clk, long utp);
 long sys_clock_getres(long clk, long ures);
 long sys_nanosleep(long ureq, long urem);
+long sys_getitimer(long which, long uvalue);
+long sys_alarm(long seconds);
+long sys_setitimer(long which, long unew, long uold);
 long sys_clock_nanosleep(long clk, long flags, long ureq, long urem);
 
 /* kernel/signal.c */

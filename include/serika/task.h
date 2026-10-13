@@ -6,6 +6,7 @@
 
 #include <serika/list.h>
 #include <serika/signal.h>
+#include <serika/timer.h>
 #include <serika/wait.h>
 
 #include <deps/tree.h>
@@ -39,6 +40,8 @@ struct tgroup {
     list_node    threads;   /* the live ones, by group_node */
     struct task *leader;    /* reaped last: a zombie until live is 0 */
     bool         exiting;   /* exit_group() or a fatal signal started */
+    struct timer itimer;    /* ITIMER_REAL: SIGALRM to the leader. kernel/time.c */
+    uint64_t     itimer_interval; /* tsc ticks to the next one. 0: it fires once */
     long         exit_code; /* then everyone's, and the process's status */
 };
 

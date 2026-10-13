@@ -408,7 +408,10 @@ void task_free(struct task *task) {
 
     if (task->mm) mm_put(task->mm);
     if (task->files) files_put(task->files);
-    if (task->group && __atomic_sub_fetch(&task->group->users, 1, 4) == 0) kfree(task->group); /* __ATOMIC_ACQ_REL */
+    if (task->group && __atomic_sub_fetch(&task->group->users, 1, 4) == 0) {   /* __ATOMIC_ACQ_REL */
+        timer_del(&task->group->itimer);
+        kfree(task->group);
+    }
 
     if (task->kstack) free_pages((void *)V2P((uintptr_t)task->kstack), SIZE_TO_ORDER(task->kernel_stack_size));
 
@@ -498,6 +501,9 @@ void task_dead(struct task *task) {
     }
 
     spin_unlock_irqrestore(&tasklist_lock, f);
+
+    /* nobody is left for its SIGALRM */
+    if (done && g) timer_del(&g->itimer);
 
     while (!list_empty(&zombies)) {
         struct task *child = list_first(&zombies, struct task, sibling);

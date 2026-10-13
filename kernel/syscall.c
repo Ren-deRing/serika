@@ -262,6 +262,9 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_RECVMMSG:        return sys_recvmmsg((int)args[0], args[1], (int)args[2], (int)args[3], args[4]);
         case SYS_SENDMMSG:        return sys_sendmmsg((int)args[0], args[1], (int)args[2], (int)args[3]);
         case SYS_NANOSLEEP:       return sys_nanosleep(args[0], args[1]);
+        case SYS_GETITIMER:       return sys_getitimer(args[0], args[1]);
+        case SYS_ALARM:           return sys_alarm(args[0]);
+        case SYS_SETITIMER:       return sys_setitimer(args[0], args[1], args[2]);
         case SYS_SENDFILE:        return sys_sendfile(args[0], args[1], args[2], args[3]);
         case SYS_PAUSE:           return sys_pause();
         case SYS_GETPID:          return sys_getpid();

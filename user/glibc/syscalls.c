@@ -12,9 +12,17 @@
 #include <sys/select.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+static volatile int alarms;
+
+static void on_alarm(int sig) {
+    (void)sig;
+    alarms++;
+}
 
 static void *die_holding(void *arg) {
     pthread_mutex_lock(arg);
@@ -236,6 +244,43 @@ int main(void) {
 
     pthread_mutex_consistent(&mu);
     pthread_mutex_unlock(&mu);
+
+    /* the real-time timer: SIGALRM once after the value, again after the interval, and what is left is told back */
+    struct sigaction sa = { .sa_handler = on_alarm };
+    struct itimerval it = { .it_value = { 0, 50000 } }, old;
+
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGALRM, &sa, NULL) != 0) return 60;
+
+    alarms = 0;
+    if (setitimer(ITIMER_REAL, &it, NULL) != 0) return 61;
+    if (getitimer(ITIMER_REAL, &old) != 0 || old.it_value.tv_sec != 0 || old.it_value.tv_usec <= 0 || old.it_value.tv_usec > 50000) return 62;
+
+    for (int i = 0; i < 100 && !alarms; i++) usleep(10000);
+
+    if (alarms != 1) return 63;
+
+    it = (struct itimerval){ .it_interval = { 0, 20000 }, .it_value = { 0, 20000 } };
+    alarms = 0;
+
+    if (setitimer(ITIMER_REAL, &it, NULL) != 0) return 64;
+
+    for (int i = 0; i < 200 && alarms < 3; i++) usleep(10000);
+
+    /* stopped by a zero value, which gives back what was running */
+    it = (struct itimerval){ 0 };
+    if (setitimer(ITIMER_REAL, &it, &old) != 0 || old.it_interval.tv_usec != 20000) return 65;
+    if (alarms < 3) return 66;
+
+    usleep(100000);
+    alarms = 0;
+    usleep(100000);
+    if (alarms != 0) return 67;
+
+    /* alarm(): seconds, and what was left of the one before */
+    if (alarm(30) != 0) return 68;
+    if (alarm(0) != 30) return 69;
 
     return 0x5e;
 }
