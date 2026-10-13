@@ -1,6 +1,7 @@
 #include <serika/errno.h>
 #include <serika/net.h>
 #include <serika/string.h>
+#include <serika/tcp.h>
 
 /* IPv4. a packet that is not whole is dropped (a fragment too: none are put together, and none are sent, the MTU is 1500),
  * and what is not for us: no forwarding */
@@ -62,6 +63,7 @@ void ip_rx(struct netdev *dev, struct nbuf *n) {
     switch (h->proto) {
     case IPPROTO_ICMP: icmp_rx(dev, src, dst, n); return;
     case IPPROTO_UDP:  udp_rx(dev, h, n); return;
+    case IPPROTO_TCP:  tcp_rx(dev, h, n); return;
     default: break;
     }
 
@@ -106,6 +108,21 @@ static bool route(uint32_t dst, struct netdev **devp, uint32_t *nexthop, uint32_
 
     *devp = dev;
     return dev && (dev->flags & NETDEV_UP);
+}
+
+uint32_t net_pseudo_sum(uint32_t src, uint32_t dst, uint8_t proto, uint16_t len) {
+    struct { uint32_t src, dst; uint8_t zero, proto; uint16_t len; } __attribute__((packed)) ps = {
+        .src = htonl(src), .dst = htonl(dst), .zero = 0, .proto = proto, .len = htons(len),
+    };
+
+    return net_csum_add(&ps, sizeof(ps), 0);
+}
+
+uint32_t ip_mtu_for(uint32_t dst) {
+    struct netdev *dev;
+    uint32_t nexthop, src;
+
+    return route(dst, &dev, &nexthop, &src) ? dev->mtu : 0;
 }
 
 uint32_t ip_src_for(uint32_t dst) {

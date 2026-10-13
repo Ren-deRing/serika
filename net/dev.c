@@ -6,6 +6,7 @@
 #include <serika/printk.h>
 #include <serika/sched.h>
 #include <serika/string.h>
+#include <serika/tcp.h>
 #include <serika/task.h>
 #include <serika/timer.h>
 
@@ -46,7 +47,7 @@ int netdev_register(struct netdev *dev) {
     dev->next = NULL;
     *pp = dev;
 
-    /* TODO: DHCP (sub-project 2) */
+    /* the address until DHCP gives one */
     if (first && !dev->ip) {
         dev->ip   = IP4(10, 0, 2, 15);
         dev->mask = IP4(255, 255, 255, 0);
@@ -70,6 +71,11 @@ struct netdev *netdev_find(const char *name) {
 
 struct netdev *netdev_first(void) {
     return devices;
+}
+
+void netd_kick(uint32_t work) {
+    __atomic_fetch_or(&netd_work, work, __ATOMIC_SEQ_CST);
+    wake_up(&netd_wq);
 }
 
 void net_schedule(struct netdev *dev) {
@@ -120,6 +126,8 @@ static void netd(void) {
             tick_arm();
         }
 
+        if (work & NETD_TCP) tcp_tick();
+
         wake_up(&net_wq);
         mutex_unlock(&net_lock);
     }
@@ -133,6 +141,7 @@ void netdev_init(void) {
     wait_queue_init(&netd_wq);
 
     loop_init();
+    tcp_init();
 
     struct task *t = task_create(netd, 10);
 

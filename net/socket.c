@@ -187,6 +187,17 @@ static struct file *sock_file_new(struct sock *sk, uint32_t flags) {
     return f;
 }
 
+/* a descriptor for the socket, which is the caller's reference's: it is put if there is none */
+long sock_fd_new(struct sock *sk, long flags) {
+    struct file *f = sock_file_new(sk, flags);
+    if (!f) return -ENOMEM;
+
+    int fd = fd_install(current_task()->files, f, flags & SOCK_CLOEXEC, 0);
+    if (fd < 0) vfs_close(f);
+
+    return fd;
+}
+
 /* ---- socket, socketpair ---- */
 
 static int check_type(long domain, long type, long protocol) {

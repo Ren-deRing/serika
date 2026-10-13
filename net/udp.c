@@ -101,7 +101,28 @@ void udp_unbind(struct isock *sk) {
     sk->rx_bytes = 0;
 }
 
+/* an ICMP error for a datagram that a connected socket sent: its next call has it */
+void udp_icmp_err(uint32_t laddr, uint16_t lport, uint32_t raddr, uint16_t rport, int err) {
+    for (list_node *l = udp_socks.next; l != &udp_socks; l = l->next) {
+        struct isock *s = container_of(l, struct isock, node);
+
+        if (s->lport != lport || (s->laddr && s->laddr != laddr)) continue;
+        if (!s->connected || s->raddr != raddr || s->rport != rport) continue;
+
+        s->err = err;
+    }
+
+    wake_up(&net_wq);
+}
+
 int udp_send(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, size_t len) {
+    if (sk->err) {
+        int e = sk->err;
+
+        sk->err = 0;
+        return e;
+    }
+
     if (len > UDP_MAX) return -EMSGSIZE;
     if (dport == 0) return -EINVAL;
 
@@ -194,10 +215,17 @@ drop:
 long udp_recv(struct isock *sk, void *buf, size_t cap, size_t *full, uint32_t *saddr, uint16_t *sport, bool peek,
               bool nonblock, uint64_t deadline) {
     while (list_empty(&sk->rx)) {
+        if (sk->err) {
+            int e = sk->err;
+
+            sk->err = 0;
+            return e;
+        }
+
         if (sk->rx_shut) return 0;
         if (nonblock) return -EAGAIN;
 
-        int err = net_wait_intr(!list_empty(&sk->rx) || sk->rx_shut, deadline);
+        int err = net_wait_intr(!list_empty(&sk->rx) || sk->rx_shut || sk->err, deadline);
 
         if (err == -ETIMEDOUT) return -EAGAIN;
         if (err) return err;
@@ -225,6 +253,7 @@ uint32_t udp_poll(struct isock *sk) {
     uint32_t mask = 0x004;       /* POLLOUT: a send does not wait */
 
     if (!list_empty(&sk->rx) || sk->rx_shut) mask |= 0x001;
+    if (sk->err) mask |= 0x008;
     if (sk->rx_shut && sk->tx_shut) mask |= 0x010;
 
     return mask;

@@ -28,7 +28,11 @@ int main(void) {
     int a = socket(AF_INET, SOCK_DGRAM, 0), b = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
 
     if (a < 0 || b < 0) return 1;
-    if (socket(AF_INET, SOCK_STREAM, 0) != -1 && errno != ESOCKTNOSUPPORT) return 2;
+    int t = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (t < 0) return 2;
+
+    close(t);
     if (socket(AF_INET, SOCK_RAW, 0) != -1) return 3;
 
     /* a name: the port is one that was picked, and a second bind to it is an error */

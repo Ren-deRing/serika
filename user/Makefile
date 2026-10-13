@@ -3,10 +3,11 @@ INITRD     := $(BUILD_DIR)/initrd.cpio
 
 # against the host's shared glibc: ld.so and the libraries go in /lib64
 GLIBC_CC   := clang
-GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo sockets events drmtest gbmtest pty udp dns
+GLIBC_BINS := hello files signals fork threads syscalls gltest fbdemo sockets events drmtest gbmtest pty udp dns tcp
 
 # what a program needs beyond libc and libm
 LIBS_gltest := -lEGL -lGLESv2
+LIBS_tcp := -pthread
 LIBS_fbdemo := -lEGL -lGLESv2
 LIBS_drmtest := -I/usr/include/libdrm -ldrm
 LIBS_gbmtest := -I/usr/include/libdrm -lgbm -lEGL -lGLESv2 -ldrm

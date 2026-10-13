@@ -44,6 +44,7 @@ long reap_within(struct task *t, long *status, uint64_t ms);
 long run_user(const uint8_t *code, size_t size, long *status);
 long run_exec(const char *path, long *status); /* the program's argv and envp are fixed */
 long run_exec_mode(const char *path, const char *mode, long *status);
+long run_exec_mode_ms(const char *path, const char *mode, uint64_t ms, long *status); /* a time limit of ms */
 
 void test_run_all();
 
@@ -130,6 +131,10 @@ bool test_net_dhcp_parse();
 bool test_net_dhcp();
 bool test_exec_udp();
 bool test_exec_dns();
+bool test_net_tcp_misc();
+bool test_exec_tcp();
+bool test_exec_tcp_loss();
+bool test_exec_tcp_net();
 bool test_exec_events();
 bool test_exec_drm();
 bool test_exec_gbm();

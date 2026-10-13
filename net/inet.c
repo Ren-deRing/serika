@@ -11,6 +11,7 @@
 #include <serika/socket.h>
 #include <serika/string.h>
 #include <serika/task.h>
+#include <serika/tcp.h>
 #include <serika/uio.h>
 #include <serika/vfs.h>
 
@@ -55,13 +56,6 @@
 #define ARPHRD_ETHER    1
 #define ARPHRD_LOOPBACK 772
 
-struct sockaddr_in {
-    uint16_t family;
-    uint16_t port;            /* network order */
-    uint32_t addr;            /* network order */
-    uint8_t  zero[8];
-};
-
 struct ifreq {
     char name[16];
     union {
@@ -102,21 +96,35 @@ struct isock *isock_new(int type, int protocol) {
 }
 
 struct sock *inet_create(int type, int protocol, int *err) {
-    if (type != SOCK_DGRAM) {
-        *err = -ESOCKTNOSUPPORT;       /* TODO: TCP (sub-project 3) */
+    if (type != SOCK_DGRAM && type != SOCK_STREAM) {
+        *err = -ESOCKTNOSUPPORT;
         return NULL;
     }
 
-    if (protocol != 0 && protocol != IPPROTO_UDP) {
+    int proto = type == SOCK_STREAM ? IPPROTO_TCP : IPPROTO_UDP;
+
+    if (protocol != 0 && protocol != proto) {
         *err = -EPROTONOSUPPORT;
         return NULL;
     }
 
-    struct isock *sk = isock_new(SOCK_DGRAM, IPPROTO_UDP);
+    struct isock *sk = isock_new(type, proto);
 
     if (!sk) {
         *err = -ENOMEM;
         return NULL;
+    }
+
+    if (type == SOCK_STREAM) {
+        sk->tcb = tcb_new();
+
+        if (!sk->tcb) {
+            kfree(sk);
+            *err = -ENOMEM;
+            return NULL;
+        }
+
+        sk->tcb->sk = sk;
     }
 
     return &sk->sock;
@@ -128,7 +136,7 @@ static struct isock *isock_of(struct file *f) {
 
 /* ---- addresses ---- */
 
-static int sin_from_user(long uaddr, long ulen, struct sockaddr_in *sin) {
+int sin_from_user(long uaddr, long ulen, struct sockaddr_in *sin) {
     if (ulen < (long)sizeof(*sin)) return -EINVAL;
 
     int err = copy_from_user(sin, uaddr, sizeof(*sin));
@@ -137,7 +145,7 @@ static int sin_from_user(long uaddr, long ulen, struct sockaddr_in *sin) {
     return sin->family == AF_INET ? 0 : -EAFNOSUPPORT;
 }
 
-static void sin_make(struct sockaddr_in *sin, uint32_t addr, uint16_t port) {
+void sin_make(struct sockaddr_in *sin, uint32_t addr, uint16_t port) {
     memset(sin, 0, sizeof(*sin));
     sin->family = AF_INET;
     sin->port   = htons(port);
@@ -145,7 +153,7 @@ static void sin_make(struct sockaddr_in *sin, uint32_t addr, uint16_t port) {
 }
 
 /* as many bytes of it as fit in room, and the length it has. the length is in user memory too: read first, written after */
-static long sin_to_user(long uaddr, long ulenp, const struct sockaddr_in *sin) {
+long sin_to_user(long uaddr, long ulenp, const struct sockaddr_in *sin) {
     int32_t room, total = sizeof(*sin);
     long err = copy_from_user(&room, ulenp, sizeof(room));
 
@@ -158,6 +166,8 @@ static long sin_to_user(long uaddr, long ulenp, const struct sockaddr_in *sin) {
 }
 
 static int inet_op_bind(struct file *f, long uaddr, long ulen) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_bind(f, uaddr, ulen);
+
     struct isock *sk = isock_of(f);
     struct sockaddr_in sin;
     int err = sin_from_user(uaddr, ulen, &sin);
@@ -171,6 +181,8 @@ static int inet_op_bind(struct file *f, long uaddr, long ulen) {
 }
 
 static int inet_op_connect(struct file *f, long uaddr, long ulen) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_connect(f, uaddr, ulen);
+
     struct isock *sk = isock_of(f);
     struct sockaddr_in sin;
     uint16_t family;
@@ -205,6 +217,8 @@ static int inet_op_connect(struct file *f, long uaddr, long ulen) {
 }
 
 static int inet_op_listen(struct file *f, long backlog) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_listen(f, backlog);
+
     (void)f;
     (void)backlog;
 
@@ -212,6 +226,8 @@ static int inet_op_listen(struct file *f, long backlog) {
 }
 
 static long inet_op_accept(struct file *f, long uaddr, long ulenp, long flags) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_accept(f, uaddr, ulenp, flags);
+
     (void)f;
     (void)uaddr;
     (void)ulenp;
@@ -221,6 +237,8 @@ static long inet_op_accept(struct file *f, long uaddr, long ulenp, long flags) {
 }
 
 static long inet_op_getname(struct file *f, long uaddr, long ulenp, bool peer) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_getname(f, uaddr, ulenp, peer);
+
     struct isock *sk = isock_of(f);
     struct sockaddr_in sin;
 
@@ -242,6 +260,8 @@ static long inet_op_getname(struct file *f, long uaddr, long ulenp, bool peer) {
 }
 
 static int inet_op_shutdown(struct file *f, long how) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_shutdown(f, how);
+
     struct isock *sk = isock_of(f);
 
     mutex_lock(&net_lock);
@@ -303,6 +323,8 @@ static long send_k(struct isock *sk, const struct sockaddr_in *dst, const void *
 }
 
 static long inet_op_sendmsg(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_sendmsg(f, mh, iov, flags);
+
     struct isock *sk = isock_of(f);
     struct sockaddr_in sin;
     size_t total = 0;
@@ -343,6 +365,8 @@ static uint64_t rcv_deadline(struct isock *sk) {
 }
 
 static long inet_op_recvmsg(struct file *f, struct msghdr *mh, const struct iovec *iov, unsigned flags) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_recvmsg(f, mh, iov, flags);
+
     struct isock *sk = isock_of(f);
     bool nonblock = (f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT);
     size_t cap = 0, full = 0;
@@ -407,6 +431,8 @@ static long inet_op_recvmsg(struct file *f, struct msghdr *mh, const struct iove
 }
 
 static long inet_op_read(struct file *f, void *buf, size_t n) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_read(f, buf, n);
+
     struct isock *sk = isock_of(f);
     size_t full;
 
@@ -417,6 +443,8 @@ static long inet_op_read(struct file *f, void *buf, size_t n) {
 }
 
 static long inet_op_write(struct file *f, const void *buf, size_t n) {
+    if (isock_of(f)->type == SOCK_STREAM) return tcp_op_write(f, buf, n);
+
     long r = send_k(isock_of(f), NULL, buf, n, 0);
 
     if (r == -EPIPE) send_sigpipe();
@@ -424,6 +452,8 @@ static long inet_op_write(struct file *f, const void *buf, size_t n) {
 }
 
 static uint32_t inet_op_poll(struct inode *inode, struct poll_table *pt) {
+    if (((struct isock *)inode->priv)->type == SOCK_STREAM) return tcp_op_poll(inode, pt);
+
     poll_wait(pt, &net_wq);
 
     mutex_lock(&net_lock);
@@ -455,6 +485,8 @@ static long inet_op_setsockopt(struct file *f, long level, long name, long uval,
     struct isock *sk = isock_of(f);
     int32_t v = 0;
     long err = 0;
+
+    if (level == SOL_TCP) return sk->type == SOCK_STREAM ? tcp_op_setsockopt(f, level, name, uval, len) : -ENOPROTOOPT;
 
     if (level == IPPROTO_IP) {
         /* what the resolver of glibc asks for, and nothing here changes with it */
@@ -506,6 +538,22 @@ static long inet_op_setsockopt(struct file *f, long level, long name, long uval,
         err = -ENOPROTOOPT;
     }
 
+    /* the connection has its own copy of what it needs */
+    if (!err && sk->type == SOCK_STREAM && sk->tcb) {
+        struct tcb *tp = sk->tcb;
+        bool ka = sk->flags & (1U << SO_KEEPALIVE);
+
+        tp->rcvbuf = sk->rcvbuf;
+        tp->sndbuf = sk->sndbuf;
+
+        if (ka != tp->keepalive) {
+            tp->keepalive = ka;
+
+            if (ka) tcp_keepalive_start(tp);
+            else tp->ka_at = 0;
+        }
+    }
+
     mutex_unlock(&net_lock);
     return err;
 }
@@ -514,6 +562,8 @@ static long inet_op_getsockopt(struct file *f, long level, long name, long uval,
     struct isock *sk = isock_of(f);
     int32_t ulen;
     long err;
+
+    if (level == SOL_TCP) return sk->type == SOCK_STREAM ? tcp_op_getsockopt(f, level, name, uval, ulenp) : -ENOPROTOOPT;
 
     if ((err = copy_from_user(&ulen, ulenp, sizeof(ulen)))) return err;
     if (ulen < 0) return -EINVAL;
@@ -539,8 +589,18 @@ static long inet_op_getsockopt(struct file *f, long level, long name, long uval,
 
         switch (name) {
             case SO_TYPE:        out.i = sk->type; break;
-            case SO_ERROR:       out.i = 0; break;
-            case SO_ACCEPTCONN:  out.i = 0; break;
+            case SO_ERROR:
+                /* the error nobody has been told of, once */
+                if (sk->type == SOCK_STREAM && sk->tcb) {
+                    out.i = -sk->tcb->err;
+                    sk->tcb->err = 0;
+                } else {
+                    out.i = -sk->err;
+                    sk->err = 0;
+                }
+                break;
+
+            case SO_ACCEPTCONN:  out.i = sk->type == SOCK_STREAM && sk->tcb && sk->tcb->state == TCP_LISTEN; break;
             case SO_SNDBUF:
             case SO_SNDBUFFORCE: out.i = sk->sndbuf; break;
             case SO_RCVBUF:
@@ -741,12 +801,17 @@ static long inet_op_ioctl(struct inode *inode, unsigned long cmd, unsigned long 
     switch (cmd) {
         case FIONREAD:
             mutex_lock(&net_lock);
-            n = list_empty(&sk->rx) ? 0 : list_first(&sk->rx, struct nbuf, node)->len;
+
+            if (sk->type == SOCK_STREAM) n = sk->tcb->state == TCP_LISTEN ? 0 : sk->tcb->rx_bytes;
+            else n = list_empty(&sk->rx) ? 0 : list_first(&sk->rx, struct nbuf, node)->len;
+
             mutex_unlock(&net_lock);
             return copy_to_user(arg, &n, sizeof(n));
 
         case SIOCOUTQ:
-            n = 0;
+            mutex_lock(&net_lock);
+            n = sk->type == SOCK_STREAM ? sk->tcb->snd_bytes : 0;
+            mutex_unlock(&net_lock);
             return copy_to_user(arg, &n, sizeof(n));
     }
 
@@ -756,12 +821,22 @@ static long inet_op_ioctl(struct inode *inode, unsigned long cmd, unsigned long 
 }
 
 static void inet_op_release(struct inode *inode) {
+    if (((struct isock *)inode->priv)->type == SOCK_STREAM) {
+        tcp_op_release(inode);
+        return;
+    }
+
     mutex_lock(&net_lock);
     udp_unbind(inode->priv);
     mutex_unlock(&net_lock);
 }
 
 static void inet_op_put(struct sock *sk) {
+    struct isock *isk = (struct isock *)sk;
+
+    /* a socket that never had a file (accept could not make one) still holds its connection */
+    if (isk->type == SOCK_STREAM && (isk->tcb || isk->bound)) tcp_sock_release(isk);
+
     kfree(sk);
 }
 

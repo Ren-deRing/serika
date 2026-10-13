@@ -4,6 +4,7 @@
 #include <serika/printk.h>
 #include <serika/sched.h>
 #include <serika/syscall.h>
+#include <serika/tcp.h>
 
 #include <asm/arch.h>
 
@@ -57,4 +58,27 @@ long run_exec_mode(const char *path, const char *mode, long *status) {
 
     sched_add_task(t);
     return reap_within(t, status, 2000);
+}
+
+/* the same, for a program that may take longer than two seconds */
+long run_exec_mode_ms(const char *path, const char *mode, uint64_t ms, long *status) {
+    const char *const argv[] = { path, mode, NULL };
+    struct task *t;
+
+    if (task_create_exec(path, argv, NULL, 0, &t) != 0) return 0;
+
+    sched_add_task(t);
+
+    long reaped = reap_within(t, status, ms);
+
+    if (reaped > 0 && WEXITSTATUS(*status) != 0x5e)
+        printk("exec: %s exited with %ld\n", path, WEXITSTATUS(*status));
+
+    /* it did not end: the connections say where it is */
+    if (reaped == 0) {
+        printk("exec: %s %s did not end in %lu ms\n", path, mode, ms);
+        tcp_dump();
+    }
+
+    return reaped;
 }

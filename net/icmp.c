@@ -4,6 +4,7 @@
 #include <serika/sched.h>
 #include <serika/string.h>
 #include <serika/task.h>
+#include <serika/tcp.h>
 
 #include <asm/arch.h>
 
@@ -20,10 +21,46 @@ static struct {
     uint64_t rx_tsc;
 } ping;
 
+/* an ICMP error is about a packet of ours: its header and the first 8 bytes of its data are in the message. the socket
+ * that sent it is told */
+static void unreach_rx(uint8_t code, struct nbuf *n) {
+    const struct ip_hdr *oh = (const struct ip_hdr *)(n->data + sizeof(struct icmp_hdr));
+    uint32_t have = n->len - sizeof(struct icmp_hdr);
+
+    if (have < IP_HLEN || (oh->ver_ihl >> 4) != 4) return;
+
+    uint32_t hlen = (oh->ver_ihl & 0xf) * 4;
+
+    if (hlen < IP_HLEN || have < hlen + 8) return;
+
+    const uint8_t *t = (const uint8_t *)oh + hlen;
+    uint32_t osrc = ntohl(oh->src), odst = ntohl(oh->dst);
+    uint16_t sport = ntohs(*(const uint16_t *)t), dport = ntohs(*(const uint16_t *)(t + 2));
+    int err;
+
+    if (!ip_is_local(osrc) && (osrc >> 24) != 127) return;
+
+    switch (code) {
+    case 0:  err = -ENETUNREACH; break;
+    case 2:
+    case 3:  err = -ECONNREFUSED; break;
+    case 4:  return;                       /* needs fragmenting: the path MTU is not looked for */
+    default: err = -EHOSTUNREACH; break;
+    }
+
+    if (oh->proto == IPPROTO_UDP) udp_icmp_err(osrc, sport, odst, dport, err);
+    else if (oh->proto == IPPROTO_TCP) tcp_icmp_err(osrc, sport, odst, dport, err);
+}
+
 void icmp_rx(struct netdev *dev, uint32_t src, uint32_t dst, struct nbuf *n) {
     struct icmp_hdr *h = (struct icmp_hdr *)n->data;
 
     if (n->len < sizeof(*h) || net_csum(h, n->len, 0) != 0) goto drop;
+
+    if (h->type == ICMP_DEST_UNREACH) {
+        unreach_rx(h->code, n);
+        goto drop;
+    }
 
     if (h->type == ICMP_ECHO_REQUEST) {
         /* to us and not to everyone (a broadcast would make us a part of a smurf) */

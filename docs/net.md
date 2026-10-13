@@ -146,3 +146,74 @@ and the lease; `/etc/resolv.conf` is written with the DNS server. Then the lease
 T1 and T2 that cannot be (not T1 < T2 < lease) are replaced by the defaults, a lease of `0xffffffff` is never renewed.
 `dhcp_renew_now()` makes the wait for T1 end at once; the test uses it to see a renewal go through QEMU's server. Not here:
 the options for a host name, NTP, domain search; `INFORM`, `RELEASE` when the interface goes down; more than one interface.
+
+# TCP
+
+`SOCK_STREAM` on `AF_INET`. The code is `net/tcp.c` (the connection table, ending a connection, the timers), `net/tcp_in.c` (a
+segment arrives), `net/tcp_out.c` (building segments, sending, the timer of a lost one) and `net/tcp_sock.c` (the calls of the
+socket); the structures are in `serika/tcp.h`. Everything is under `net_lock`, as UDP is, and a call copies from or to user
+memory in pieces of 4 KiB outside of it.
+
+## Connections
+
+A socket has a `struct tcb` from the moment it is made. Connections (all but the listeners) are in one list, listeners in
+another, looked up by the four numbers (a listener by its port and address, or any). The states are those of RFC 9293: SYN
+sent and received, established, FIN wait 1 and 2, close wait, closing, last ACK, TIME_WAIT (twice 30 s). The first sequence
+number is a hash of the connection and a secret plus a clock (RFC 6528). A new SYN for a connection that waits out its end is
+a new connection. A segment for no connection is answered by a reset, and so is one with data for a connection whose owner is
+gone. A reset is believed only if it is the exact next sequence number (RFC 5961), and a SYN in a connection is answered by an
+ACK.
+
+`listen()` puts the socket in the listener table with a backlog; a SYN makes a half open connection (a `tcb` with the listener
+as parent, at most 128), the ACK of the handshake moves it to the accept queue (`backlog + 1` in all, more SYNs are dropped).
+`accept()` makes the socket for it. `connect()` waits for the end of the handshake, or (nonblocking) is `EINPROGRESS` and the
+result comes with poll (`POLLOUT`, `POLLERR`) and `SO_ERROR`. `close()` sends what is queued and the FIN and the connection
+goes on by itself, without the socket (an orphan); with data not read it is a reset. A closed orphan in FIN WAIT 2 is given
+up after 60 s. ICMP errors (port or host unreachable) end a connection that is not made yet, and are told to a connected UDP
+socket.
+
+## Sending
+
+Data is a list of segments of at most one MSS (`tseg`), appended to as long as the last one is not sent. A segment is built
+into a new `nbuf` each time it is sent, so a retransmission copies from the list. What may go is decided by the window of the
+peer, the congestion window, and Nagle (a short segment waits while there is data not acknowledged; `TCP_NODELAY` switches it
+off). A window smaller than a segment, with nothing in flight, cuts the segment to fit. A shut window is asked about by the
+persist timer (an ACK with an old sequence number, which the peer answers). The send buffer is `SO_SNDBUF`, 212992 by default.
+
+Options: MSS (1460 less the MTU's difference, and less the 12 bytes of the timestamps), window scale (the shift is the least that
+says the receive buffer in 16 bits) and timestamps. SACK is not here.
+
+## Losses and the congestion window
+
+RFC 6298: the timer is `srtt + 4 rttvar`, at least 200 ms and at most 60 s, doubled on each timeout; the round trip is taken
+from the timestamp that comes back (or, with a peer that has none, from one timed segment that was not sent again). A timeout
+sends again from the oldest unacknowledged segment with the window of one segment (slow start), up to 15 times (a SYN 6) and the
+connection is over with `ETIMEDOUT`. Three duplicate ACKs are a fast retransmit and fast recovery by RFC 6582 (NewReno):
+the window is inflated by the duplicates, a partial ACK sends the next hole. The window starts at 10 segments, doubles per round
+trip to the threshold, and grows by a segment per round trip after.
+
+## Receiving
+
+In-order data is a list of buffers (a small segment goes into the last buffer if it fits); data after a gap is kept by
+sequence number (it counts against the receive buffer) and joins when the gap is filled. An ACK goes at once for every second
+segment, for a gap (a duplicate ACK) and for a FIN; for one segment alone after 40 ms. The window that is said never shrinks
+and does not move by less than a segment or half of the buffer (the reader taking data out sends the window when it is worth
+it). Timestamps are checked (PAWS).
+
+## Sockets
+
+`MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_NOSIGNAL`, `shutdown`, `SO_ERROR`, `SO_KEEPALIVE` (with `TCP_KEEPIDLE`,
+`TCP_KEEPINTVL`, `TCP_KEEPCNT`; default 2 h, 75 s, 9), `SO_RCVTIMEO`, `SO_SNDTIMEO`, `SO_RCVBUF`, `SO_SNDBUF`, `SO_REUSEADDR`,
+`TCP_NODELAY`, `TCP_MAXSEG` (read), `FIONREAD`, `SIOCOUTQ`. A few more `TCP_*` options are taken and not used. Poll gives
+`POLLIN`, `POLLOUT`, `POLLHUP`, `POLLERR` and `POLLRDHUP`.
+
+Not here: SACK, ECN, Fast Open, urgent data (the flag is ignored), path MTU discovery (DF is set, nothing is cut: a path with a
+smaller MTU than 1500 does not work), syncookies, a congestion control other than Reno, `MSG_ERRQUEUE`.
+
+## Tests
+
+`net tcp misc` (shifts, sequence order), `exec tcp` (the calls and 4 MiB echoed through threads, and a receiver with a small
+buffer that does not read for a while), `exec tcp loss` (`lo` drops each 40th packet: the same, with 256 KiB), `exec tcp net`
+(a page from example.com through QEMU's user network, skipped with no NIC and tolerant of a host with no internet).
+`loop_set_drop()` is the hook for losses. A test that does not end (`run_exec_mode_ms()` timing out) prints every connection with
+`tcp_dump()`: the sequence numbers, windows, timers and queues, and whether `net_lock` is held.

@@ -25,7 +25,7 @@ static inline uint32_t ntohl(uint32_t v) { return __builtin_bswap32(v); }
 /* a struct nbuf is one kmalloc object of 2 KiB: room in front for the headers that are put on as the packet goes down,
  * and for a frame (1514) behind them */
 #define NBUF_TOTAL    2048
-#define NBUF_HEADROOM 64
+#define NBUF_HEADROOM 96
 
 struct netdev;
 
@@ -80,6 +80,11 @@ struct netdev *netdev_find(const char *name);
 struct netdev *netdev_first(void);           /* the list, in the order of registration: next. net_lock held */
 
 void net_schedule(struct netdev *dev);       /* from an interrupt: wake netd to poll the interface */
+void netd_kick(uint32_t work);               /* wake netd for the TCP timer: NETD_TCP */
+#define NETD_TCP (1U << 2)
+
+void     loop_set_drop(unsigned every);      /* a test: lo loses each every-th packet (0: none) */
+unsigned loop_dropped(void);
 void net_rx(struct netdev *dev, struct nbuf *n); /* from poll(): one frame (a packet on the loopback) into the stack. takes it */
 
 /* waits, with net_lock held on the way in and out, until cond holds (-ETIMEDOUT: not by the deadline, in tsc ticks). cond
@@ -90,11 +95,12 @@ extern struct wait_queue net_wq;
     ({                                                          \
         struct wait_entry __we = { 0 };                         \
         int __ret = 0;                                          \
+        uint64_t __dl = (deadline);   /* once: it may be a call */ \
                                                                 \
         for (;;) {                                              \
             prepare_to_wait(&net_wq, &__we);                    \
             if (cond) break;                                    \
-            if (rdtsc() >= (deadline)) {                        \
+            if (rdtsc() >= __dl) {                        \
                 __ret = -ETIMEDOUT;                             \
                 break;                                          \
             }                                                   \
@@ -112,6 +118,7 @@ extern struct wait_queue net_wq;
     ({                                                          \
         struct wait_entry __we = { 0 };                         \
         int __ret = 0;                                          \
+        uint64_t __dl = (deadline);   /* once: it may be a call */ \
                                                                 \
         for (;;) {                                              \
             prepare_to_wait(&net_wq, &__we);                    \
@@ -120,7 +127,7 @@ extern struct wait_queue net_wq;
                 __ret = -ERESTARTSYS;                           \
                 break;                                          \
             }                                                   \
-            if (rdtsc() >= (deadline)) {                        \
+            if (rdtsc() >= __dl) {                        \
                 __ret = -ETIMEDOUT;                             \
                 break;                                          \
             }                                                   \
@@ -161,6 +168,7 @@ bool arp_lookup(uint32_t ip, uint8_t mac[ETH_ALEN]); /* only a known one */
 /* ---- IPv4 ---- */
 
 #define IPPROTO_ICMP 1
+#define IPPROTO_TCP  6
 #define IPPROTO_UDP  17
 
 struct ip_hdr {
@@ -185,7 +193,9 @@ void ip_rx(struct netdev *dev, struct nbuf *n);
 
 /* the address that ip_tx() would send from to dst. 0: no route */
 uint32_t ip_src_for(uint32_t dst);
+uint32_t ip_mtu_for(uint32_t dst);        /* of the interface it goes out of. 0: no route */
 bool     ip_is_local(uint32_t ip);
+uint32_t net_pseudo_sum(uint32_t src, uint32_t dst, uint8_t proto, uint16_t len); /* of the pseudo header of TCP and UDP */
 
 /* src 0: that of the interface the route is through. n is the payload; takes it. -EHOSTUNREACH: no route */
 int ip_tx(uint32_t src, uint32_t dst, uint8_t proto, struct nbuf *n);
@@ -241,6 +251,8 @@ struct isock {
     int         rcvbuf, sndbuf;
     uint64_t    rcvtimeo, sndtimeo; /* tsc ticks. 0: none */
     uint32_t    flags;        /* a bit for each option that is only given back: 1 << SO_x */
+    int         err;          /* -errno that nobody has been told of */
+    struct tcb *tcb;          /* SOCK_STREAM */
 };
 
 void udp_rx(struct netdev *dev, const struct ip_hdr *iph, struct nbuf *n);
@@ -253,9 +265,21 @@ int  udp_send(struct isock *sk, uint32_t dst, uint16_t dport, const void *data, 
 long udp_recv(struct isock *sk, void *buf, size_t cap, size_t *full, uint32_t *saddr, uint16_t *sport, bool peek,
               bool nonblock, uint64_t deadline);
 void udp_unbind(struct isock *sk);
+void udp_icmp_err(uint32_t laddr, uint16_t lport, uint32_t raddr, uint16_t rport, int err); /* an ICMP error for a datagram of ours */
 uint32_t udp_poll(struct isock *sk);
 
 /* ---- inet sockets (net/inet.c) ---- */
+
+struct sockaddr_in {
+    uint16_t family;
+    uint16_t port;            /* network order */
+    uint32_t addr;            /* network order */
+    uint8_t  zero[8];
+};
+
+int  sin_from_user(long uaddr, long ulen, struct sockaddr_in *sin); /* 0, -EINVAL, -EAFNOSUPPORT, -EFAULT */
+void sin_make(struct sockaddr_in *sin, uint32_t addr, uint16_t port);
+long sin_to_user(long uaddr, long ulenp, const struct sockaddr_in *sin);
 
 struct isock *isock_new(int type, int protocol);
 struct sock  *inet_create(int type, int protocol, int *err);

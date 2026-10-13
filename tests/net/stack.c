@@ -3,6 +3,7 @@
 #include <serika/printk.h>
 #include <serika/sched.h>
 #include <serika/string.h>
+#include <serika/tcp.h>
 #include <serika/timer.h>
 
 #include <asm/arch.h>
@@ -213,5 +214,17 @@ bool test_net_dhcp() {
 
     TEST_ASSERT(dhcp_renewals() == before + 1 && dhcp_state() == DHCP_BOUND);
     TEST_ASSERT(icmp_ping(dev->gw, 3000, NULL) == 0);
+    return true;
+}
+
+/* the numbers of TCP: the shift of the window for a buffer, the sequence order over the wrap, and a number to start from */
+bool test_net_tcp_misc() {
+    TEST_ASSERT(tcp_scale_for(65535) == 0 && tcp_scale_for(65536) == 1 && tcp_scale_for(UDP_RCVBUF) == 2);
+    TEST_ASSERT(tcp_scale_for(1 << 20) == 5 && tcp_scale_for(1 << 30) == 14);
+
+    TEST_ASSERT(SEQ_LT(0xfffffff0U, 5) && SEQ_GT(5, 0xfffffff0U) && SEQ_LE(7, 7) && !SEQ_LT(7, 7));
+
+    TEST_ASSERT(tcp_isn(1, 2, 3, 4) != tcp_isn(1, 2, 3, 5));
+    TEST_ASSERT(sizeof(struct tcp_hdr) == TCP_HLEN);
     return true;
 }

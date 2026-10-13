@@ -6,7 +6,24 @@
 static struct netdev lo;
 static list_node     queue = LIST_HEAD_INIT(queue);
 
+static unsigned drop_every, count, dropped;
+
+void loop_set_drop(unsigned every) {
+    drop_every = every;
+    count = 0;
+}
+
+unsigned loop_dropped(void) {
+    return dropped;
+}
+
 static int loop_xmit(struct netdev *dev, struct nbuf *n) {
+    if (drop_every && ++count % drop_every == 0) {
+        dropped++;
+        nbuf_free(n);
+        return 0;
+    }
+
     list_add_tail(&n->node, &queue);
     net_schedule(dev);
     return 0;

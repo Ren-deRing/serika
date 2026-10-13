@@ -177,6 +177,8 @@ struct sock {
 
 extern const struct proto_ops unix_proto_ops;
 
+long sock_fd_new(struct sock *sk, long flags); /* a file and a descriptor for a socket that was made; accept() of a kind makes them */
+
 /* a unix socket. sk->lock covers all of it except what is marked, and no code holds two of them */
 struct usock {
     struct sock      sock;
