@@ -85,6 +85,19 @@ long sys_clock_gettime(long clk, long utp) {
     return copy_to_user(utp, &ts, sizeof(ts));
 }
 
+/* every clock is the tsc: a nanosecond is as fine as a timespec says */
+long sys_clock_getres(long clk, long ures) {
+    uint64_t tsc;
+
+    int err = clock_tsc(clk, &tsc);
+    if (err) return err;
+    if (!ures) return 0;
+
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 1 };
+
+    return copy_to_user(ures, &ts, sizeof(ts));
+}
+
 struct timeval {
     int64_t tv_sec;
     int64_t tv_usec;

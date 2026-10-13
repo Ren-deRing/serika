@@ -211,6 +211,7 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_WRITE:           return sys_write(args[0], args[1], args[2]);
         case SYS_OPEN:            return sys_openat(AT_FDCWD, args[0], args[1], args[2]);
         case SYS_CLOSE:           return sys_close(args[0]);
+        case SYS_CLOSE_RANGE:     return sys_close_range((uint32_t)args[0], (uint32_t)args[1], (uint32_t)args[2]);
         case SYS_STAT:            return sys_newfstatat(AT_FDCWD, args[0], args[1], 0);
         case SYS_FSTAT:           return sys_fstat(args[0], args[1]);
         case SYS_LSTAT:           return sys_newfstatat(AT_FDCWD, args[0], args[1], AT_SYMLINK_NOFOLLOW);
@@ -220,6 +221,14 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_MUNMAP:          return sys_munmap(args[0], args[1]);
         case SYS_MREMAP:          return sys_mremap(args[0], args[1], args[2], (int)args[3]);
         case SYS_MADVISE:         return sys_madvise(args[0], args[1], args[2]);
+
+        /* there is no swap: what is mapped is in memory, so it is locked in it already */
+        case SYS_MLOCK:
+        case SYS_MLOCK2:
+        case SYS_MUNLOCK:
+        case SYS_MLOCKALL:
+        case SYS_MUNLOCKALL:      return 0;
+
         case SYS_BRK:             return sys_brk(args[0]);
         case SYS_RT_SIGACTION:    return sys_rt_sigaction(args[0], args[1], args[2], args[3]);
         case SYS_RT_SIGPROCMASK:  return sys_rt_sigprocmask(args[0], args[1], args[2], args[3]);
@@ -309,6 +318,8 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_GETEGID:         return sys_getuid();
         case SYS_SETUID:
         case SYS_SETGID:          return sys_setuid(args[0]);
+        case SYS_GETRESUID:
+        case SYS_GETRESGID:       return sys_getresuid(args[0], args[1], args[2]);
         case SYS_GETPPID:         return sys_getppid();
         case SYS_SETPGID:         return sys_setpgid((int)args[0], (int)args[1]);
         case SYS_GETPGRP:         return sys_getpgrp();
@@ -327,6 +338,7 @@ static long do_syscall(long nr, const long args[6]) {
         case SYS_SET_ROBUST_LIST: return sys_set_robust_list(args[0], args[1]);
         case SYS_SET_TID_ADDRESS: return sys_set_tid_address(args[0]);
         case SYS_CLOCK_GETTIME:   return sys_clock_gettime(args[0], args[1]);
+        case SYS_CLOCK_GETRES:    return sys_clock_getres(args[0], args[1]);
         case SYS_CLOCK_NANOSLEEP: return sys_clock_nanosleep(args[0], args[1], args[2], args[3]);
         case SYS_EXIT_GROUP:      return sys_exit_group(args[0]);
         case SYS_TGKILL:          return sys_tgkill((int)args[0], (int)args[1], (int)args[2]);

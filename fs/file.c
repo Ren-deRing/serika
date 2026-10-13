@@ -263,6 +263,33 @@ long sys_close(long fd) {
     return 0;
 }
 
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+
+/* every fd from first to last: closed, or marked to close on exec. UNSHARE wants a table of its own first, which a table
+ * no thread shares already is */
+long sys_close_range(long first, long last, long flags) {
+    struct files *files = current_task()->files;
+
+    if (flags & ~(CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC)) return -EINVAL;
+    if ((uint32_t)first > (uint32_t)last) return -EINVAL;
+    if ((flags & CLOSE_RANGE_UNSHARE) && __atomic_load_n(&files->users, 0) > 1) return -EINVAL; /* not done here */
+
+    uint32_t end = (uint32_t)last < FILES_MAX - 1 ? (uint32_t)last : FILES_MAX - 1;
+
+    for (uint32_t fd = first; fd <= end; fd++) {
+        if (flags & CLOSE_RANGE_CLOEXEC) {
+            uint64_t f = spin_lock_irqsave(&files->lock);
+            if (files->fd[fd]) cloexec_set(files, fd, true);
+            spin_unlock_irqrestore(&files->lock, f);
+        } else {
+            sys_close(fd); /* -EBADF for the ones not open: nothing to do */
+        }
+    }
+
+    return 0;
+}
+
 /* no position: a pipe or a tty */
 static bool is_stream(struct inode *inode) {
     return inode->ops->stream;

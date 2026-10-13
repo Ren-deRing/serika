@@ -121,6 +121,15 @@ int main(void) {
     free(page);
     close(mfd);
 
+    /* close_range: marked to close on exec, then closed, up to the end */
+    int cr[2];
+    if (pipe(cr) != 0) return 41;
+    if (close_range(cr[0], cr[1], CLOSE_RANGE_CLOEXEC) != 0) return 42;
+    if (!(fcntl(cr[0], F_GETFD) & FD_CLOEXEC) || !(fcntl(cr[1], F_GETFD) & FD_CLOEXEC)) return 43;
+    if (close_range(cr[0], ~0U, 0) != 0) return 44;
+    if (fcntl(cr[0], F_GETFD) != -1 || errno != EBADF || fcntl(cr[1], F_GETFD) != -1) return 45;
+    if (close_range(5, 4, 0) != -1 || errno != EINVAL) return 46;
+
     printf("files: all checks passed\n");
     return 0x5e;
 }

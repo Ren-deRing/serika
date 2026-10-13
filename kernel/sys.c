@@ -23,6 +23,16 @@ long sys_setuid(long id) {
     return id == 0 ? 0 : -EPERM;
 }
 
+/* the real, effective and saved ids, all root. getresgid() is the same */
+long sys_getresuid(long ur, long ue, long us) {
+    uint32_t id = 0;
+
+    if (copy_to_user(ur, &id, sizeof(id)) || copy_to_user(ue, &id, sizeof(id)) || copy_to_user(us, &id, sizeof(id)))
+        return -EFAULT;
+
+    return 0;
+}
+
 long sys_uname(long ubuf) {
     struct { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; } u;
 

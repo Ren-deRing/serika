@@ -30,6 +30,11 @@
 #define SYS_MREMAP           25
 #define SYS_MSYNC            26
 #define SYS_MADVISE          28
+#define SYS_MLOCK            149
+#define SYS_MUNLOCK          150
+#define SYS_MLOCKALL         151
+#define SYS_MUNLOCKALL       152
+#define SYS_MLOCK2           325
 #define SYS_DUP              32
 #define SYS_DUP2             33
 #define SYS_PAUSE            34
@@ -94,6 +99,8 @@
 #define SYS_GETPGRP         111
 #define SYS_SETSID          112
 #define SYS_GETPGID         121
+#define SYS_GETRESUID       118
+#define SYS_GETRESGID       120
 #define SYS_GETSID          124
 #define SYS_CAPGET          125
 #define SYS_CAPSET          126
@@ -123,6 +130,7 @@
 #define SYS_GETDENTS64      217
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_CLOCK_GETTIME   228
+#define SYS_CLOCK_GETRES    229
 #define SYS_CLOCK_NANOSLEEP 230
 #define SYS_EXIT_GROUP      231
 #define SYS_EPOLL_WAIT      232
@@ -168,6 +176,7 @@
 #define SYS_STATX           332
 #define SYS_RSEQ            334
 #define SYS_CLONE3          435
+#define SYS_CLOSE_RANGE     436
 #define SYS_FACCESSAT2      439
 #define SYS_EPOLL_PWAIT2    441
 
@@ -181,6 +190,7 @@ long sys_arch_prctl(long code, long addr); /* arch */
 /* fs/file.c */
 long sys_openat(long dirfd, long upath, long flags, long mode);
 long sys_close(long fd);
+long sys_close_range(long first, long last, long flags);
 long sys_read(long fd, long buf, long count);
 long sys_write(long fd, long buf, long count);
 long sys_lseek(long fd, long off, long whence);
@@ -273,6 +283,7 @@ long sys_getrandom(long ubuf, long len, long flags);
 
 /* kernel/sys.c */
 long sys_getuid(void);
+long sys_getresuid(long ur, long ue, long us);
 long sys_setuid(long id);
 long sys_uname(long ubuf);
 long sys_prlimit64(long pid, long resource, long unew, long uold);
@@ -302,6 +313,7 @@ long sys_pselect6(long n, long ur, long uw, long ue, long utsp, long usig);
 long sys_gettimeofday(long utv, long utz);
 long sys_time(long utloc);
 long sys_clock_gettime(long clk, long utp);
+long sys_clock_getres(long clk, long ures);
 long sys_nanosleep(long ureq, long urem);
 long sys_clock_nanosleep(long clk, long flags, long ureq, long urem);
 
