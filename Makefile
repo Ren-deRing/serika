@@ -3,10 +3,19 @@ ARCH   ?= x86_64
 
 MAKEFLAGS += -s
 
+export MINIMAL    ?= 0
+
 export BASE_DIR   := $(shell pwd)
-export BUILD_DIR  := $(BASE_DIR)/build
 export DEPS_DIR   := $(BASE_DIR)/deps
+
+ifeq ($(MINIMAL),1)
+export BUILD_DIR  := $(BASE_DIR)/build-minimal
+export BIN_DIR    := $(BASE_DIR)/bin-minimal
+else
+export BUILD_DIR  := $(BASE_DIR)/build
 export BIN_DIR    := $(BASE_DIR)/bin
+endif
+
 export OBJ_DIR    := $(BUILD_DIR)/obj
 export TOOL_DIR   := $(BASE_DIR)/tools
 
@@ -28,6 +37,10 @@ OFFSETS += include/serika/cpu.h cpu include/serika/task.h task include/serika/pm
 
 # Except for drivers.
 SUBDIRS := kernel init arch mm fs net tests
+
+ifeq ($(MINIMAL),1)
+SUBDIRS := $(filter-out tests,$(SUBDIRS))
+endif
 
 include drivers/Makefile
 
@@ -52,6 +65,10 @@ export CPPFLAGS := -I$(BASE_DIR) \
 				   -I$(BASE_DIR)/arch/$(ARCH)/include \
                    -D__$(ARCH)__ \
                    -MMD -MP
+
+ifeq ($(MINIMAL),1)
+export CPPFLAGS += -DCONFIG_MINIMAL
+endif
 
 export LDFLAGS  := $(ARCH_LDFLAGS) -nostdlib -static --gc-sections \
 				   -no-pie -z max-page-size=0x1000 -T $(BASE_DIR)/arch/$(ARCH)/kernel/linker.ld
@@ -168,6 +185,19 @@ build: all initrd
 		--efi-boot-image \
 		$(IMAGE_ROOT) -o $(IMAGE) \
 
+ifeq ($(MINIMAL),1)
+QEMU_DISKS :=
+QEMU_AUDIO :=
+else
+QEMU_DISKS := -drive file=$(BUILD_DIR)/disk.img,if=none,id=disk0,format=raw \
+		-device ide-hd,drive=disk0,bus=ide.0 \
+		-drive file=$(BUILD_DIR)/test.img,if=none,id=disk1,format=raw \
+		-device ide-hd,drive=disk1,bus=ide.1
+QEMU_AUDIO := -audiodev pipewire,id=snd0 \
+		-device intel-hda \
+		-device hda-output,audiodev=snd0
+endif
+
 run: build
 	@echo "QEMU  :"
 	@qemu-system-x86_64 \
@@ -180,17 +210,12 @@ run: build
 		-serial chardev:ser0 \
 		-no-reboot \
 		-smp 4 \
-		-drive file=$(BUILD_DIR)/disk.img,if=none,id=disk0,format=raw \
-		-device ide-hd,drive=disk0,bus=ide.0 \
-		-drive file=$(BUILD_DIR)/test.img,if=none,id=disk1,format=raw \
-		-device ide-hd,drive=disk1,bus=ide.1 \
+		$(QEMU_DISKS) \
 		-netdev user,id=net0 \
 		-device e1000e,netdev=net0 \
 		-device virtio-keyboard-pci,disable-legacy=on \
 		-device virtio-tablet-pci,disable-legacy=on \
-		-audiodev pipewire,id=snd0 \
-		-device intel-hda \
-		-device hda-output,audiodev=snd0 \
+		$(QEMU_AUDIO) \
 		-accel kvm -cpu host,tsc-freq=2500000000 \
 #		-S -s
 

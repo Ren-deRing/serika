@@ -30,7 +30,9 @@
 
 #include <asm/acpi.h>
 
+#ifndef CONFIG_MINIMAL
 #include <tests/test.h>
+#endif
 
 /* busybox's sh on the console, and back here once it is done */
 static void run_shell(void) {
@@ -105,7 +107,9 @@ notrace void start_init(void) {
     virtio_input_init();
     hda_init();
     
+#ifndef CONFIG_MINIMAL
     test_run_all();
+#endif
 
     run_shell();
 

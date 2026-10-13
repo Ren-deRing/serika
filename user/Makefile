@@ -12,11 +12,17 @@ LIBS_fbdemo := -lEGL -lGLESv2
 LIBS_drmtest := -I/usr/include/libdrm -ldrm
 LIBS_gbmtest := -I/usr/include/libdrm -lgbm -lEGL -lGLESv2 -ldrm
 GLIBC_LIBS := ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libgcc_s.so.1
-EXEC       := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
 
 # the host's busybox, static, and a link to it for each applet
 APPLETS := $(BUILD_DIR)/applets.stamp
-EXEC    += $(INITRD_DIR)/bin/busybox $(APPLETS) $(INITRD_DIR)/etc/pki/tls/cert.pem
+
+# MINIMAL=1 (see the Makefile above): nothing but busybox, which needs no glibc
+ifeq ($(MINIMAL),1)
+EXEC := $(INITRD_DIR)/bin/busybox $(APPLETS)
+else
+EXEC := $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%) $(GLIBC_LIBS:%=$(INITRD_DIR)/lib64/%)
+EXEC += $(INITRD_DIR)/bin/busybox $(APPLETS) $(INITRD_DIR)/etc/pki/tls/cert.pem
+endif
 
 # the disk: an ext4 image that the kernel mounts on /usr. a tree is made as the host has it (/usr/...) and the
 # image is what is under usr
@@ -48,7 +54,11 @@ CA_FILE := /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 
 .PHONY: all $(INITRD) $(DISK) $(TESTDISK)
 
+ifeq ($(MINIMAL),1)
+all: $(INITRD)
+else
 all: $(INITRD) $(DISK) $(TESTDISK)
+endif
 
 $(GLIBC_BINS:%=$(INITRD_DIR)/bin/%): $(INITRD_DIR)/bin/%: glibc/%.c
 	@mkdir -p $(dir $@)
