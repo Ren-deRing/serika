@@ -122,6 +122,13 @@ void input_event(struct input_dev *dev, uint16_t type, uint16_t code, int32_t va
     uint64_t flags = spin_lock_irqsave(&dev->lock);
 
     if (type == EV_KEY && code <= KEY_MAX && value != 2) { /* 2 is the autorepeat of a key that is down */
+        /* a key that is where the event says it is: nothing happened, as in linux's input core. qemu's wheel sends the
+         * release of BTN_GEAR_UP and BTN_GEAR_DOWN with no press before it, which libinput calls a bug of the kernel */
+        if (input_test_bit(dev->key, code) == !!value) {
+            spin_unlock_irqrestore(&dev->lock, flags);
+            return;
+        }
+
         if (value) input_set_bit(dev->key, code);
         else       dev->key[code / 8] &= ~(1u << (code % 8));
     }
