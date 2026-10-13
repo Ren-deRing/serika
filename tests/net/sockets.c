@@ -83,3 +83,21 @@ bool test_exec_openssl() {
     TEST_ASSERT(WEXITSTATUS(status) == 0);
     return true;
 }
+
+/* python, from the disk: its library loads, and a script (/usr/hello.py) does arithmetic, files, threads, a tcp echo on lo and a
+ * child process. skipped without it */
+bool test_exec_python() {
+    struct file *f;
+    long status = 0;
+
+    if (vfs_open("/usr/bin/python3", O_RDONLY, 0, &f) != 0) {
+        printk("python: not on /usr -- skipped\n");
+        return true;
+    }
+
+    vfs_close(f);
+
+    TEST_ASSERT(run_exec_mode_ms("/usr/bin/python3", "/usr/hello.py", 120000, &status) > 0);
+    TEST_ASSERT(WEXITSTATUS(status) == 0x5e);
+    return true;
+}

@@ -136,6 +136,7 @@ bool test_exec_tcp();
 bool test_exec_tcp_loss();
 bool test_exec_tcp_net();
 bool test_exec_openssl();
+bool test_exec_python();
 bool test_exec_events();
 bool test_exec_drm();
 bool test_exec_gbm();
